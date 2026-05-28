@@ -1,0 +1,33 @@
+# ColibriApp — .gitignore
+# ──────────────────────────────────────────────────
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Respaldos locales (no subir al repositorio)
+backups/
+*.backup
+*.bak
+colibri_backup_*.json
+
+# Variables de entorno (si se usan en el futuro)
+.env
+.env.local
+.env.*.local
+
+# Editores
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (si se agrega build en el futuro)
+node_modules/
+npm-debug.log*
+
+# Vercel
+.vercel/
+
+# Logs
+*.log
