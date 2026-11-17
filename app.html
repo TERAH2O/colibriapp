@@ -503,6 +503,20 @@ function grabarSnap(src){
   LISTAS_SYNC.forEach(function(k){ if(!Array.isArray(src[k]))return; var m={}; src[k].forEach(function(x){m[itemKey(x)]=hashItem(x);}); s[k]=m; });
   try{localStorage.setItem(SNAP_KEY,JSON.stringify(s));}catch(e){}
 }
+// Cuando la version de la nube gana sobre una edicion local, la version local se guarda aparte (nada se pierde en silencio)
+var CONFLICTOS_KEY = 'colibri_conflictos';
+function guardarConflicto(lista, item){
+  try{
+    var arr = JSON.parse(localStorage.getItem(CONFLICTOS_KEY) || '[]');
+    var copia = JSON.parse(JSON.stringify(item)); if (copia && 'foto' in copia) copia.foto = null;
+    var h = lista + '|' + itemKey(item) + '|' + hashItem(item);
+    if (arr.some(function(a){ return a.h === h; })) return; // misma version ya respaldada
+    arr.push({h:h, lista:lista, cuando:new Date().toISOString(), item:copia});
+    while (arr.length > 40) arr.shift();
+    localStorage.setItem(CONFLICTOS_KEY, JSON.stringify(arr));
+    fbLogPush('⚠️ Conflicto en ' + lista + ': se conservo la version de la nube; la edicion local se guardo en respaldo de conflictos');
+  }catch(e){}
+}
 function mergeListas(data){
   var snap=leerSnap(), extra=false;
   var soloNube=!snap&&!TENIA_LOCAL;
@@ -518,8 +532,8 @@ function mergeListas(data){
       if(l){
         var hl=hashItem(l);
         if(hl!==hr&&sn&&sn[key]===hr){out.push(l);extra=true;} // editado solo en este dispositivo
-        else if(hl!==hr&&k==='ninos'){out.push(unirNino(x,l));} // ambos cambiaron: no perder asistencia/eventos
-        else out.push(x);
+        else if(hl!==hr&&k==='ninos'){guardarConflicto(k,l);out.push(unirNino(x,l));} // ambos cambiaron: no perder asistencia/eventos
+        else { if(hl!==hr) guardarConflicto(k,l); out.push(x); }
       } else out.push(x); // registro que este dispositivo no tenia
     });
     loc.forEach(function(x){
@@ -700,7 +714,31 @@ function avisarFotosSinPermiso(){
     setTimeout(function(){ showToast('⚠️ Galería: agrega la regla de ' + FB_FOTOS + ' en Firestore (ver Configuración)', '#F59E0B'); }, 1200);
   }
 }
+// ── Foto de perfil del niño: un documento por niño en la misma coleccion de fotos (id 'perfil_<nid>') ──
+// Antes la foto nunca salia del dispositivo (maindata la subia como null). Se reutiliza FB_FOTOS para no exigir una regla nueva.
+var PERFIL_KEY = 'colibri_perfiles_subidos'; // {nid: hash de la foto ya subida} (solo este dispositivo)
+function perfilesSubidos(){ try { return JSON.parse(localStorage.getItem(PERFIL_KEY) || '{}'); } catch(e) { return {}; } }
+function marcarPerfilSubido(nid, url){ var m = perfilesSubidos(); m[nid] = hashStr(String(url||'')); try { localStorage.setItem(PERFIL_KEY, JSON.stringify(m)); } catch(e) {} }
+function subirPerfil(nino){
+  if (!nino || !nino.id || !nino.foto || !fsDB || !fbOnline) return;
+  var url = String(nino.foto);
+  if (url.length > FB_DOC_MAX) { fbLogPush('⚠️ Foto de perfil demasiado pesada para la nube (' + Math.round(url.length/1024) + ' KB)'); return; }
+  var id = 'perfil_' + nino.id;
+  fsDB.collection(FB_FOTOS).doc(id).set({id:id, sid:'perfil', nid:nino.id, url:url, tipo:'perfil', t:Date.now(), _at:Date.now()})
+    .then(function(){ marcarPerfilSubido(nino.id, url); fbLogPush('🖼️ Foto de perfil publicada en la nube'); })
+    .catch(function(e){
+      var code = (e && e.code) || '';
+      if (code === 'permission-denied') { fotosSinPermiso = true; avisarFotosSinPermiso(); }
+      fbLogPush('⚠️ Foto de perfil pendiente de subir: ' + (code || (e && e.message)));
+    });
+}
+function subirPerfilesPendientes(){
+  if (!fsDB || !fbOnline) return;
+  var hechos = perfilesSubidos();
+  (DB.ninos || []).forEach(function(n){ if (n && n.foto && hechos[n.id] !== hashStr(String(n.foto))) subirPerfil(n); });
+}
 function subirFotosPendientes(){
+  try { subirPerfilesPendientes(); } catch(e) {}
   if (!fsDB || !fbOnline || !DB.fotos) return;
   Object.keys(DB.fotos).forEach(function(sid){
     (DB.fotos[sid]||[]).forEach(function(f){ if (f && !f._up) subirFoto(sid, f); });
@@ -713,9 +751,15 @@ function escucharFotos(){
   if (!fsDB) return;
   if (fbFotosListener) fbFotosListener();
   fbFotosListener = fsDB.collection(FB_FOTOS).onSnapshot(function(snap){
-    var cambios = false, nuevas = 0;
+    var cambios = false, nuevas = 0, perfilesNuevos = false;
     snap.docChanges().forEach(function(ch){
       var d = ch.doc.data(); if (!d || !d.sid || !d.id) return;
+      if (d.sid === 'perfil') { // foto de perfil de un niño: no va a la galeria
+        if (ch.type === 'removed' || !d.nid || !d.url) return;
+        var nn = (DB.ninos || []).find(function(x){ return x.id === d.nid; });
+        if (nn && nn.foto !== d.url) { nn.foto = d.url; marcarPerfilSubido(nn.id, d.url); cambios = true; perfilesNuevos = true; }
+        return;
+      }
       if (!DB.fotos) DB.fotos = {};
       if (!DB.fotos[d.sid]) DB.fotos[d.sid] = [];
       var arr = DB.fotos[d.sid], i = -1;
@@ -732,6 +776,7 @@ function escucharFotos(){
     });
     guardarLocal();
     galRefrescar();
+    if (perfilesNuevos && !nuevas) refrescarUI();
     if (nuevas) {
       fbLogPush('📷 ' + nuevas + ' archivo(s) de galeria recibidos de la nube');
       refrescarUI();
@@ -3600,7 +3645,7 @@ function adminNinos(main){
         }):null,
         btn('Eliminar','btn-sm btn-light-red',()=>{
           if(!confirm('¿Eliminar definitivamente a '+n.nom+'?\n\nSe borra su ficha y el acceso del representante ('+n.codp+'). El historial de pagos cobrados se conserva.'))return;
-          const nDel=DB.ninos.find(x=>x.id===n.id);DB.ninos=DB.ninos.filter(x=>x.id!==n.id);if(nDel){const ui=USERS.findIndex(u=>u.cod===nDel.codp);if(ui>=0)USERS.splice(ui,1);}saveDB();draw();showToast('Niño eliminado','#EF4444');
+          const nDel=DB.ninos.find(x=>x.id===n.id);DB.ninos=DB.ninos.filter(x=>x.id!==n.id);borrarFotoNube('perfil_'+n.id);if(nDel){const ui=USERS.findIndex(u=>u.cod===nDel.codp);if(ui>=0)USERS.splice(ui,1);}saveDB();draw();showToast('Niño eliminado','#EF4444');
         })
       ));
       g.appendChild(c);
@@ -5865,7 +5910,7 @@ function openFicha(nino){
     if(nino.foto){const img=el('img',{src:nino.foto,style:{width:'100%',height:'100%',objectFit:'cover'}});avDiv.appendChild(img);}
     else avDiv.appendChild(document.createTextNode(nino.ava));
     const fu=el('input',{type:'file',accept:'image/*',style:{display:'none'}});
-    fu.addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;comprimirImg(f,320,du=>{nino.foto=du;saveDB();draw();});});
+    fu.addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;comprimirImg(f,320,du=>{nino.foto=du;saveDB();subirPerfil(nino);draw();});});
     const fb=el('button',{style:{position:'absolute',bottom:0,right:0,background:'#F59E0B',border:'none',borderRadius:'50%',width:'25px',height:'25px',cursor:'pointer',fontSize:'12px',color:'#fff'}},document.createTextNode('📷'));
     fb.addEventListener('click',()=>fu.click());
     avDiv.appendChild(fu);avDiv.appendChild(fb);
