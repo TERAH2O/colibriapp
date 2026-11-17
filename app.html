@@ -2496,11 +2496,33 @@ function adminBalance(main){
 
 // ─── Admin: Historial General ──────────────────────────────
 
+// ─── Filtro de estudiantes para las exportaciones (solo decide que sale en el archivo; no cambia ningun dato guardado) ───
+var EXP_FILTROS=[['activos_vigente','Activos del año vigente'],['activos_todos','Todos los activos'],['egresados','Egresados'],['retirados','Retirados'],['todos','Todos (activos, egresados y retirados)']];
+var EXP_FILTRO_KEY='colibriapp_expFiltro';
+function expFiltro(){ var f='activos_vigente'; try{ f=localStorage.getItem(EXP_FILTRO_KEY)||f; }catch(e){} return EXP_FILTROS.some(function(x){return x[0]===f;})?f:'activos_vigente'; }
+function expFiltroLbl(){ var f=expFiltro(); return (EXP_FILTROS.find(function(x){return x[0]===f;})||EXP_FILTROS[0])[1]; }
+function ninoEnFiltro(n){
+  var e=estadoNino(n), f=expFiltro();
+  if(f==='activos_vigente') return e==='activo'&&(!n.anioLectivo||String(n.anioLectivo)===String(anioLectivoActual()));
+  if(f==='activos_todos') return e==='activo';
+  if(f==='egresados') return e==='egresado';
+  if(f==='retirados') return e==='retirado';
+  return true;
+}
+function ninosParaExportar(){ return (DB.ninos||[]).filter(ninoEnFiltro); }
+// Registros ligados a un estudiante (pagos, matriculas, accesos): solo los de los estudiantes incluidos; con "Todos" sale todo, incluso de estudiantes ya eliminados
+function okNidExport(){ var todos=expFiltro()==='todos', ids=new Set(ninosParaExportar().map(function(n){return n.id;})); return function(nid){ return todos||!nid||ids.has(nid); }; }
+function selectorFiltroExport(){
+  var sel=selEl(expFiltro(),EXP_FILTROS,function(v){ try{ localStorage.setItem(EXP_FILTRO_KEY,v); }catch(e){} showToast('Se exportará: '+expFiltroLbl(),'#7C3AED'); });
+  sel.style.maxWidth='290px'; sel.style.marginBottom='0';
+  return div({display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'},p({margin:0,fontSize:'12px',fontWeight:800,color:'#5B21B6'},'Estudiantes a exportar:'),sel);
+}
 function exportHistorialExcel(){
+  const ninosX=ninosParaExportar(), okX=okNidExport(), pagosX=(DB.historialPagos||[]).filter(h=>okX(h.nid));
   const fecha=new Date().toLocaleDateString('es-EC',{day:'numeric',month:'long',year:'numeric'});
   // Sheet 1: Matrículas
   let matRows='';
-  DB.ninos.forEach((n,i)=>{
+  ninosX.forEach((n,i)=>{
     const sala=DB.salas.find(s=>s.id===n.sid);
     const mat=DB.matriculas?DB.matriculas.find(m=>m.nid===n.id):null;
     const sv=mat?getSvcInfo(mat.servicio):{label:'—'};
@@ -2509,11 +2531,11 @@ function exportHistorialExcel(){
   });
   // Sheet 2: Pagos
   let pagRows='';
-  (DB.historialPagos||[]).slice().reverse().forEach(h=>{
+  pagosX.slice().reverse().forEach(h=>{
     const nino=DB.ninos.find(n=>n.id===h.nid);
     pagRows+='<tr><td>'+h.fecha+'</td><td>'+(nino?nino.nom:'—')+'</td><td>'+h.concepto+'</td><td>'+h.metodo+'</td><td>$'+h.monto+'</td><td>'+(h.obs||'—')+'</td></tr>';
   });
-  const totalCob=(DB.historialPagos||[]).reduce((s,h)=>s+Number(h.monto||0),0);
+  const totalCob=pagosX.reduce((s,h)=>s+Number(h.monto||0),0);
   const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="UTF-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
 <x:ExcelWorksheet><x:Name>Matriculas</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet>
@@ -2525,7 +2547,7 @@ function exportHistorialExcel(){
 <table>
 <tr><td colspan="10" class="hdr">🐦 ColibriApp — Cuidado Infantil el Colibrí</td></tr>
 <tr><td colspan="10" class="sh">Historial General · Emitido: ${fecha}</td></tr>
-<tr><td colspan="10" style="padding:6px 10px;font-size:10pt"><strong>Total estudiantes:</strong> ${DB.ninos.length} &nbsp;|&nbsp; <strong>Total cobrado:</strong> $${totalCob}</td></tr>
+<tr><td colspan="10" style="padding:6px 10px;font-size:10pt"><strong>Estudiantes incluidos:</strong> ${expFiltroLbl()} (${ninosX.length}) &nbsp;|&nbsp; <strong>Total cobrado:</strong> $${totalCob}</td></tr>
 <tr><td colspan="10" class="sh" style="background:#7C3AED;color:#fff">📋 MATRÍCULAS</td></tr>
 <tr><th class="thcol">N°</th><th class="thcol">Estudiante</th><th class="thcol">Sala</th><th class="thcol">Servicio</th><th class="thcol">Estado</th><th class="thcol">Monto</th><th class="thcol">Vence</th><th class="thcol">Tutor</th><th class="thcol">Teléfono</th><th class="thcol">Obs.</th></tr>
 ${matRows}
@@ -2537,15 +2559,16 @@ ${pagRows}
 </table></body></html>`;
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8'}));
-  a.download='Historial_ColibriApp_'+fmt(new Date())+'.xls';
+  a.download='Historial_ColibriApp_'+fmt(new Date())+'_'+expFiltro()+'.xls';
   document.body.appendChild(a);a.click();document.body.removeChild(a);
   showToast('Historial exportado a Excel','#10B981');
 }
 
 function exportHistorialCSV(){
-  let csv='MATRÍCULAS\n';
+  const ninosX=ninosParaExportar(), okX=okNidExport(), pagosX=(DB.historialPagos||[]).filter(h=>okX(h.nid));
+  let csv='Estudiantes incluidos: '+expFiltroLbl()+' ('+ninosX.length+')\n\nMATRÍCULAS\n';
   csv+='Estudiante,Sala,Servicio,Estado,Monto,Vence,Tutor,Teléfono\n';
-  DB.ninos.forEach(n=>{
+  ninosX.forEach(n=>{
     const sala=DB.salas.find(s=>s.id===n.sid);
     const mat=DB.matriculas?DB.matriculas.find(m=>m.nid===n.id):null;
     const sv=mat?getSvcInfo(mat.servicio):{label:'—'};
@@ -2553,13 +2576,13 @@ function exportHistorialCSV(){
   });
   csv+='\nHISTORIAL DE PAGOS\n';
   csv+='Fecha,Estudiante,Concepto,Método,Monto\n';
-  (DB.historialPagos||[]).slice().reverse().forEach(h=>{
+  pagosX.slice().reverse().forEach(h=>{
     const nino=DB.ninos.find(n=>n.id===h.nid);
     csv+=h.fecha+',"'+(nino?nino.nom:'—')+'","'+h.concepto+'",'+h.metodo+',$'+h.monto+'\n';
   });
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
-  a.download='Historial_ColibriApp_'+fmt(new Date())+'.csv';
+  a.download='Historial_ColibriApp_'+fmt(new Date())+'_'+expFiltro()+'.csv';
   document.body.appendChild(a);a.click();document.body.removeChild(a);
   showToast('CSV exportado correctamente','#10B981');
 }
@@ -2568,7 +2591,8 @@ function adminHistorial(main){
   let filtroNino='todos', filtroMes='todos';
   function draw(){
     main.innerHTML='';
-    const expBtn=div({display:'flex',gap:'8px'});
+    const expBtn=div({display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'});
+    expBtn.appendChild(selectorFiltroExport());
     expBtn.appendChild(btn('📊 Exportar Excel','btn-sm btn-grn',()=>exportHistorialExcel()));
     expBtn.appendChild(btn('📄 Exportar CSV','btn-sm',()=>exportHistorialCSV(),{background:'#E5E7EB',color:'#1E1B4B',border:'none',borderRadius:'10px'}));
     main.appendChild(shdr('Historial General de Matrículas y Pagos','Todos los registros del sistema',expBtn));
@@ -2782,7 +2806,8 @@ function adminConfig(main){
   // Backup/Restore
   const bc=el('div',{cls:'card'});
   bc.appendChild(el('h3',{style:{margin:'0 0 16px',fontWeight:800}},'💾 Respaldo de datos'));
-  bc.appendChild(p({margin:'0 0 14px',color:'#6B7280',fontSize:'13px'},'Excel: para revisar e imprimir la información. JSON: copia completa para recuperar datos en la app (importar solo agrega lo que falta, nunca borra).'));
+  bc.appendChild(p({margin:'0 0 14px',color:'#6B7280',fontSize:'13px'},'Excel: para revisar e imprimir la información; sale según el filtro de estudiantes que elijas abajo. JSON: copia COMPLETA (siempre incluye a todos) para recuperar datos en la app (importar solo agrega lo que falta, nunca borra).'));
+  bc.appendChild(div({marginBottom:'14px'},selectorFiltroExport()));
   bc.appendChild(div({display:'flex',gap:'12px',flexWrap:'wrap'},
     btn('📊 Exportar a Excel','btn-grn',exportarExcel),
     btn('⬇️ Exportar respaldo (JSON)','btn-pri',()=>{
@@ -2938,15 +2963,18 @@ function exportarExcel(){
     const hoja=(nombre,filas)=>{const ws=X.utils.json_to_sheet(filas.length?filas:[{'(sin registros)':''}]);
       const cols=Object.keys(filas[0]||{'(sin registros)':''});ws['!cols']=cols.map(c=>({wch:Math.min(40,Math.max(c.length,...filas.slice(0,200).map(f=>String(f[c]==null?'':f[c]).length))+2)}));
       X.utils.book_append_sheet(wb,ws,nombre.slice(0,31));};
-    hoja('Niños',(DB.ninos||[]).map(plano));
+    const ninosX=ninosParaExportar(), okX=okNidExport();
+    hoja('Filtro aplicado',[{Dato:'Estudiantes incluidos',Valor:expFiltroLbl()},{Dato:'Cantidad de estudiantes',Valor:ninosX.length},{Dato:'Fecha de emisión',Valor:fmt(new Date())},
+      {Dato:'Nota',Valor:'Niños, accesos, mensualidades, pagos cobrados, matrículas y asistencia son solo de los estudiantes incluidos. Egresos, otros ingresos, sueldos y servicios salen completos. El respaldo (JSON) siempre es completo.'}]);
+    hoja('Niños',ninosX.map(plano));
     hoja('Salas',(DB.salas||[]).map(plano));
     hoja('Maestras',(DB.maestras||[]).map(plano));
-    hoja('Accesos',USERS.map(u=>({Rol:u.rol,Nombre:u.nom,Código:u.cod,Niño:u.nid?nomNino(u.nid):''})));
+    hoja('Accesos',USERS.filter(u=>okX(u.nid)).map(u=>({Rol:u.rol,Nombre:u.nom,Código:u.cod,Niño:u.nid?nomNino(u.nid):''})));
     [['Mensualidades','pagos'],['Pagos cobrados','historialPagos'],['Matrículas','matriculas'],['Egresos','egresos'],['Otros ingresos','otrosIngresos'],['Sueldos maestras','pagosMae'],['Servicios','servicios']]
-      .forEach(([n,k])=>hoja(n,(DB[k]||[]).map(plano)));
-    const asis=[];(DB.ninos||[]).forEach(n=>Object.keys(n.asis||{}).sort().forEach(f=>{const v=n.asis[f];asis.push({Fecha:f,Niño:n.nom,Sala:nomSala(n.sid),Estado:typeof v==='object'?(v.estado||v.e||JSON.stringify(v)):v});}));
+      .forEach(([n,k])=>hoja(n,(DB[k]||[]).filter(x=>['pagos','historialPagos','matriculas'].indexOf(k)<0||okX(x.nid)).map(plano)));
+    const asis=[];ninosX.forEach(n=>Object.keys(n.asis||{}).sort().forEach(f=>{const v=n.asis[f];asis.push({Fecha:f,Niño:n.nom,Sala:nomSala(n.sid),Estado:typeof v==='object'?(v.estado||v.e||JSON.stringify(v)):v});}));
     asis.sort((a,b)=>a.Fecha<b.Fecha?1:-1);hoja('Asistencia',asis);
-    X.writeFile(wb,'colibri_datos_'+fmt(new Date())+'.xlsx');
+    X.writeFile(wb,'colibri_datos_'+fmt(new Date())+'_'+expFiltro()+'.xlsx');
     showToast('✅ Excel descargado','#10B981');
   }).catch(e=>alert('No se pudo generar el Excel: '+e.message+'. Revisa la conexión a internet.'));
 }
@@ -3627,6 +3655,7 @@ function adminNinos(main){
     const ninosHdr=div({display:'flex',gap:'10px',flexWrap:'wrap',justifyContent:'flex-end'});
     ninosHdr.appendChild(btn('🎓 Reinscripción / Año lectivo','btn-cyn',openReinscripcion));
     ninosHdr.appendChild(btn('+ Agregar niño','btn-pri',openModal));
+    ninosHdr.appendChild(selectorFiltroExport());
     ninosHdr.appendChild(btn('📊 Exportar Excel','btn-grn',()=>exportarExcelNinos()));
     main.appendChild(shdr('Niños matriculados',activosN.length+' activos · '+egresadosN.length+' egresados · '+retiradosN.length+' retirados · Año lectivo '+anioLectivoActual(),ninosHdr));
     const pendReins=activosN.filter(n=>(n.anioLectivo||'')!==anioLectivoActual());
@@ -6317,8 +6346,9 @@ function exportarExcelNinos(){
   // Build HTML table for Excel
   const headers = ['N°','Apellidos y Nombres','Cédula Niño/a','Nacionalidad','Fecha Nacimiento','Edad','Sangre','Sala','Cédula Tutor','Tutor / Representante','Teléfono','Email','Dirección','Contacto Emergencia','Tel. Emergencia','Parentesco','Alergias','Notas','Código Acceso','F. Ingreso','Cód. Serv. Básico','Autoriza Fotos'];
   
+  const listaX = ninosParaExportar();
   let rows = '';
-  DB.ninos.forEach((n,i)=>{
+  listaX.forEach((n,i)=>{
     const sala = DB.salas.find(s=>s.id===n.sid);
     const mm=(new Date().getFullYear()-new Date(n.nac).getFullYear())*12+new Date().getMonth()-new Date(n.nac).getMonth();
     const edad=mm>=12?Math.floor(mm/12)+' años '+mm%12+' m':mm+' meses';
@@ -6355,10 +6385,10 @@ function exportarExcelNinos(){
   <tr><td colspan="${headers.length}" class="hdr-sub">Matriz General de Estudiantes — Año Lectivo 2026–2027</td></tr>
   <tr><td colspan="${headers.length/2|0}" style="padding:6px 10px;font-size:10pt"><strong>Fecha de emisión:</strong> ${fecha}</td>
       <td colspan="${Math.ceil(headers.length/2)}" style="padding:6px 10px;font-size:10pt"><strong>Directora:</strong> ${directora}</td></tr>
-  <tr><td colspan="${headers.length}" style="padding:6px 10px;font-size:10pt"><strong>Total de estudiantes registrados:</strong> ${DB.ninos.length}</td></tr>
+  <tr><td colspan="${headers.length}" style="padding:6px 10px;font-size:10pt"><strong>Estudiantes incluidos:</strong> ${expFiltroLbl()} — <strong>Total:</strong> ${listaX.length}</td></tr>
   <tr>${headers.map(h=>'<th class="hdr-col">'+h+'</th>').join('')}</tr>
   ${rows}
-  <tr><td colspan="${headers.length}" class="total">Total: ${DB.ninos.length} estudiantes matriculados — Cuidado Infantil el Colibrí</td></tr>
+  <tr><td colspan="${headers.length}" class="total">Total: ${listaX.length} estudiantes (${expFiltroLbl()}) — Cuidado Infantil el Colibrí</td></tr>
 </table>
 </body></html>`;
 
@@ -6366,7 +6396,7 @@ function exportarExcelNinos(){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'Matriz_Estudiantes_Colibri_'+new Date().toISOString().split('T')[0]+'.xls';
+  a.download = 'Matriz_Estudiantes_Colibri_'+new Date().toISOString().split('T')[0]+'_'+expFiltro()+'.xls';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
