@@ -143,7 +143,19 @@ textarea.inp{resize:vertical}
 <script>
 
 // ═══ DATOS ═══════════════════════════════════════════════
-const HOY = new Date();
+let HOY = new Date();
+// Si la app queda abierta de un dia para otro, "hoy" debe cambiar (antes quedaba fijo en el dia en que se abrio
+// y la asistencia se marcaba en la fecha equivocada)
+function revisarCambioDeDia(){
+  try{
+    var ahora = new Date();
+    if (ahora.toDateString() === HOY.toDateString()) return;
+    HOY = ahora;
+    if (typeof refrescarUI === 'function') refrescarUI();
+  }catch(e){}
+}
+document.addEventListener('visibilitychange', function(){ if (!document.hidden) revisarCambioDeDia(); });
+setInterval(revisarCambioDeDia, 60000);
 const fmt = d => d.toISOString().split('T')[0];
 // Fecha 'AAAA-MM-DD' en hora local (evita que el dia 1 caiga en el mes anterior por la zona horaria)
 const ymd = s => { const m=/^(\d{4})-(\d{2})-(\d{2})/.exec(String(s||'')); return m?new Date(+m[1],m[2]-1,+m[3]):new Date(s); };
@@ -517,6 +529,18 @@ function guardarConflicto(lista, item){
     fbLogPush('⚠️ Conflicto en ' + lista + ': se conservo la version de la nube; la edicion local se guardo en respaldo de conflictos');
   }catch(e){}
 }
+// El registro local conserva su identidad (mismo objeto) al combinar con la nube.
+// Las pantallas abiertas (asistencia, ficha del niño, etc.) guardan referencias a estos objetos: si la
+// combinacion los reemplazara por copias nuevas, lo que la persona marque despues se escribiria en un
+// objeto huerfano que ya no esta en la base y se perderia aunque la pantalla lo muestre.
+function adoptarEnLugar(l, x){
+  if (l === x) return l;
+  var foto = l.foto;
+  Object.keys(l).forEach(function(k){ delete l[k]; });
+  Object.assign(l, x);
+  if (foto && !l.foto && ('foto' in x)) l.foto = foto; // la foto de perfil local no viaja en maindata
+  return l;
+}
 function mergeListas(data){
   var snap=leerSnap(), extra=false;
   var soloNube=!snap&&!TENIA_LOCAL;
@@ -532,8 +556,8 @@ function mergeListas(data){
       if(l){
         var hl=hashItem(l);
         if(hl!==hr&&sn&&sn[key]===hr){out.push(l);extra=true;} // editado solo en este dispositivo
-        else if(hl!==hr&&k==='ninos'){guardarConflicto(k,l);out.push(unirNino(x,l));} // ambos cambiaron: no perder asistencia/eventos
-        else { if(hl!==hr) guardarConflicto(k,l); out.push(x); }
+        else if(hl!==hr&&k==='ninos'){guardarConflicto(k,l);out.push(adoptarEnLugar(l,unirNino(x,l)));} // ambos cambiaron: no perder asistencia/eventos
+        else { if(hl!==hr) guardarConflicto(k,l); out.push(adoptarEnLugar(l,x)); }
       } else out.push(x); // registro que este dispositivo no tenia
     });
     loc.forEach(function(x){
@@ -4611,9 +4635,10 @@ function maeNinos(main,sala){
 
 function maeAsist(main,sala){
   if(!sala){avisoSinSala(main);return;}
-  const ninos=ninosActivos(sala.id);
+  let ninos=ninosActivos(sala.id);
   let fSel=fmt(HOY);
   function draw(){
+    ninos=ninosActivos(sala.id); // siempre los registros vivos (la sincronizacion puede haber cambiado la lista)
     main.innerHTML='';
     const ct={P:ninos.filter(n=>n.asis[fSel]==='P').length,A:ninos.filter(n=>n.asis[fSel]==='A').length,T:ninos.filter(n=>n.asis[fSel]==='T').length};
     const fLbl=new Date(fSel+'T12:00:00').toLocaleDateString('es-EC',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
@@ -4642,12 +4667,12 @@ function maeAsist(main,sala){
       const btns=div({display:'flex',gap:'6px'});
       ['P','A','T'].forEach(s=>{
         const b=el('button',{style:{padding:'7px 14px',borderRadius:'9px',fontSize:'12px',fontWeight:700,cursor:'pointer',border:'1.5px solid '+(est===s?AC[s]:'#E5E7EB'),background:est===s?AC[s]+'22':'#fff',color:est===s?AC[s]:'#6B7280'}},AL[s]);
-        b.addEventListener('click',()=>{n.asis[fSel]=s;saveDB();draw();});
+        b.addEventListener('click',()=>{const nv=DB.ninos.find(x=>x.id===n.id)||n;if(!nv.asis)nv.asis={};nv.asis[fSel]=s;saveDB();draw();});
         btns.appendChild(b);
       });
       if(est){
         const bx=el('button',{style:{padding:'7px 10px',borderRadius:'9px',fontSize:'12px',fontWeight:700,cursor:'pointer',border:'1.5px solid #E5E7EB',background:'#fff',color:'#9CA3AF'},title:'Quitar la marca'},'✕');
-        bx.addEventListener('click',()=>{delete n.asis[fSel];saveDB();draw();showToast('Marca eliminada','#6B7280');});
+        bx.addEventListener('click',()=>{const nv=DB.ninos.find(x=>x.id===n.id)||n;delete nv.asis[fSel];saveDB();draw();showToast('Marca eliminada','#6B7280');});
         btns.appendChild(bx);
       }
       row.appendChild(btns);
