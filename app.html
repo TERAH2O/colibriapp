@@ -2338,10 +2338,10 @@ function adminBalance(main){
     // Summary cards
     const sg=el('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'14px',marginBottom:'18px'}});
     [
-      {l:'Ingresos del mes',  v:'$'+totalIngreso,   c:'#10B981',bg:'#D1FAE5',i:'💰',sub:pagsMes.length+' pagos · '+otrosMes.length+' extraordinarios'},
+      {l:'Ingresos del mes',  v:'$'+redondear2(totalIngreso),   c:'#10B981',bg:'#D1FAE5',i:'💰',sub:'cobrado en el mes · '+pagsMes.length+' pagos · '+otrosMes.length+' extraordinarios'},
       {l:'Ingreso proyectado',v:'$'+ingProyectado,c:'#06B6D4',bg:'#CFFAFE',i:'📈',sub:'matrículas activas'},
-      {l:'Egresos del mes',   v:'$'+totalEgreso,    c:'#EF4444',bg:'#FEE2E2',i:'📤',sub:egresosMes.length+' gastos registrados'},
-      {l:'Balance neto',      v:'$'+balance,        c:balance>=0?'#10B981':'#EF4444',bg:balance>=0?'#D1FAE5':'#FEE2E2',i:balance>=0?'✅':'⚠️',sub:'ingresos − egresos'}
+      {l:'Egresos del mes',   v:'$'+redondear2(totalEgreso),    c:'#EF4444',bg:'#FEE2E2',i:'📤',sub:egresosMes.length+' gastos registrados'},
+      {l:'Balance neto',      v:'$'+redondear2(balance),        c:balance>=0?'#10B981':'#EF4444',bg:balance>=0?'#D1FAE5':'#FEE2E2',i:balance>=0?'✅':'⚠️',sub:'ingresos − egresos (según fecha de cobro)'}
     ].forEach(s=>{
       const c=el('div',{cls:'stat-card'});
       c.appendChild(div({display:'flex',justifyContent:'space-between'},
@@ -2355,6 +2355,25 @@ function adminBalance(main){
       sg.appendChild(c);
     });
     main.appendChild(sg);
+
+    // ¿A qué mes corresponde lo cobrado? (no cambia ningún dato; solo explica la diferencia entre cobrado y correspondiente)
+    const conc=conciliarCobrosMes(mesLabel);
+    const difMes=redondear2(conc.totalCorresponde-conc.totalCobrado);
+    const balanceMes=redondear2(balance+difMes);
+    const filaCobro=(h)=>{ const nn=DB.ninos.find(n=>n.id===h.nid); return div({display:'flex',gap:'10px',alignItems:'center',padding:'6px 0',borderBottom:'1px solid #F3F4F6',flexWrap:'wrap'},
+      div({flex:1,minWidth:'160px'},p({margin:0,fontWeight:700,fontSize:'12px'},nn?nn.nom:'— (estudiante eliminado)'),p({margin:0,fontSize:'11px',color:'#6B7280'},h.concepto+' · cobrado el '+h.fecha+' · corresponde a '+mesDelCobro(h))),
+      p({margin:0,fontWeight:900,fontSize:'13px',color:'#B45309'},'$'+redondear2(h.monto))); };
+    const cc=el('div',{cls:'card',style:{marginBottom:'18px'}});
+    cc.appendChild(el('h3',{style:{margin:'0 0 4px',fontWeight:800}},'🔎 ¿A qué mes corresponde lo cobrado? — '+mesLabel));
+    cc.appendChild(p({margin:'0 0 12px',fontSize:'12px',color:'#6B7280'},'El balance de arriba suma el dinero según el día en que se recibió. Aquí ves cuánto de ese dinero pertenece a este mes y cuánto a otros meses (por ejemplo, una pensión de octubre cobrada en noviembre).'));
+    const cajas=div({display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(170px,1fr))',gap:'10px',marginBottom:'12px'});
+    [['Cobrado en el mes','$'+conc.totalCobrado,'#10B981','por fecha de cobro'],['Corresponde a '+mesLabel,'$'+conc.totalCorresponde,'#7C3AED','por mes del pago'],['Diferencia',(difMes>0?'+':'')+'$'+difMes,difMes===0?'#6B7280':'#B45309','corresponde − cobrado'],['Balance según mes que corresponde','$'+balanceMes,balanceMes>=0?'#10B981':'#EF4444','corresponde + extraordinarios − egresos']].forEach(function(x){
+      cajas.appendChild(div({border:'1px solid #E5E7EB',borderRadius:'12px',padding:'10px 12px'},p({margin:0,fontSize:'10px',fontWeight:700,color:'#6B7280',textTransform:'uppercase'},x[0]),p({margin:'4px 0 2px',fontSize:'18px',fontWeight:900,color:x[2]},x[1]),p({margin:0,fontSize:'10px',color:'#9CA3AF'},x[3]))); });
+    cc.appendChild(cajas);
+    if(!conc.otroMes.length&&!conc.deOtros.length) cc.appendChild(p({margin:0,fontSize:'12px',color:'#059669',fontWeight:700},'✅ Todo lo cobrado este mes corresponde a este mes.'));
+    if(conc.otroMes.length){ cc.appendChild(p({margin:'6px 0 4px',fontSize:'12px',fontWeight:800,color:'#B45309'},'Cobrado en '+mesLabel+' pero corresponde a otro mes ($'+conc.totalOtroMes+')')); conc.otroMes.forEach(h=>cc.appendChild(filaCobro(h))); }
+    if(conc.deOtros.length){ cc.appendChild(p({margin:'10px 0 4px',fontSize:'12px',fontWeight:800,color:'#B45309'},'Corresponde a '+mesLabel+' pero se cobró en otro mes ($'+conc.totalDeOtros+')')); conc.deOtros.forEach(h=>cc.appendChild(filaCobro(h))); }
+    main.appendChild(cc);
 
     // Egresos por categoría
     const eg=el('div',{cls:'g2'});
@@ -2406,7 +2425,7 @@ function adminBalance(main){
           div({width:'34px',height:'34px',borderRadius:'50%',background:'#D1FAE5',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'17px'},nino?nino.ava:'👶'),
           div({flex:1},
             p({margin:0,fontWeight:700,fontSize:'13px'},nino?nino.nom:'—'),
-            p({margin:0,fontSize:'11px',color:'#6B7280'},h.concepto+' · '+h.metodo+' · '+h.fecha)
+            p({margin:0,fontSize:'11px',color:mesDelCobro(h)!==mesLabel?'#B45309':'#6B7280',fontWeight:mesDelCobro(h)!==mesLabel?700:400},h.concepto+' · '+h.metodo+' · '+h.fecha+' · Corresponde a: '+mesDelCobro(h))
           ),
           p({margin:0,fontWeight:900,fontSize:'14px',color:'#10B981'},'$'+h.monto)
         ));
@@ -2414,7 +2433,7 @@ function adminBalance(main){
     }
     iCard.appendChild(div({background:'#D1FAE5',borderRadius:'10px',padding:'12px',marginTop:'10px',display:'flex',justifyContent:'space-between',alignItems:'center'},
       p({margin:0,fontWeight:700,color:'#059669',fontSize:'13px'},'TOTAL COBRADO'),
-      p({margin:0,fontWeight:900,color:'#059669',fontSize:'18px'},'$'+totalIngreso)
+      p({margin:0,fontWeight:900,color:'#059669',fontSize:'18px'},'$'+redondear2(totalIngreso))
     ));
     // Ingresos extraordinarios
     iCard.appendChild(div({display:'flex',justifyContent:'space-between',alignItems:'center',margin:'16px 0 8px'},
@@ -3155,6 +3174,19 @@ function migrarTiposPago(){
     if(hp.tipo!==real){ hp.tipo=real; cambios++; }
   });
   return cambios;
+}
+// A que mes pertenece un cobro: el mes que se eligio al registrarlo (pension, alimentacion, transporte...);
+// matricula, uniformes, etc. cuentan en el mes de su fecha de cobro
+function mesDelCobro(h){ var ti=tipoInfo(tipoPagoId(h)); return ti.mes ? (hpMes(h)||mesDesdeFecha(h.fecha)) : mesDesdeFecha(h.fecha); }
+function redondear2(v){ return Math.round((Number(v)||0)*100)/100; }
+// Conciliacion de cobros de un mes: lo que entro en el mes (por fecha) frente a lo que corresponde al mes (por mes del pago). No modifica datos.
+function conciliarCobrosMes(mesLabel){
+  var H=DB.historialPagos||[], suma=function(a){ return redondear2(a.reduce(function(t,h){ return t+Number(h.monto||0); },0)); };
+  var cobrados=H.filter(function(h){ return mesDesdeFecha(h.fecha)===mesLabel; });
+  var corresponden=H.filter(function(h){ return mesDelCobro(h)===mesLabel; });
+  var otroMes=cobrados.filter(function(h){ return mesDelCobro(h)!==mesLabel; });
+  var deOtros=corresponden.filter(function(h){ return mesDesdeFecha(h.fecha)!==mesLabel; });
+  return {cobrados:cobrados,corresponden:corresponden,otroMes:otroMes,deOtros:deOtros,totalCobrado:suma(cobrados),totalCorresponde:suma(corresponden),totalOtroMes:suma(otroMes),totalDeOtros:suma(deOtros)};
 }
 function tipoInfo(id){ return TIPOS_PAGO.find(t=>t.id===id)||TIPOS_PAGO[TIPOS_PAGO.length-1]; }
 function tipoPagoDe(hp){ return tipoInfo(tipoPagoId(hp)); }
@@ -6448,11 +6480,12 @@ function genBalancePDF(mIdx,anioB){
   var egresosMes=(DB.egresos||[]).filter(function(e){return enMes(e,mesLabel,mIdx,anioB);});
   var totalEgr=egresosMes.reduce(function(s,e){return s+Number(e.monto||0);},0);
   var balance=totalIng-totalEgr;
+  var conc=conciliarCobrosMes(mesLabel), difMes=redondear2(conc.totalCorresponde-conc.totalCobrado), balanceMes=redondear2(balance+difMes);
   var catMap={nomina:'Nómina / Sueldos',servicios:'Servicios básicos',alimentacion:'Alimentación / Colación',materiales:'Materiales',caja_chica:'Caja chica / Varios',otro:'Otro'};
   var ingRows='';
   pagsMes.forEach(function(h){
     var nino=DB.ninos.find(function(n){return n.id===h.nid;});
-    ingRows+='<tr><td>'+h.fecha+'</td><td style="text-align:left">'+(nino?nino.nom:'—')+'</td><td style="text-align:left">'+h.concepto+'</td><td>'+h.metodo+'</td><td>$'+h.monto+'</td></tr>';
+    ingRows+='<tr><td>'+h.fecha+'</td><td style="text-align:left">'+(nino?nino.nom:'—')+'</td><td style="text-align:left">'+h.concepto+'</td><td'+(mesDelCobro(h)!==mesLabel?' style="font-weight:bold;color:#B45309"':'')+'>'+mesDelCobro(h)+'</td><td>'+h.metodo+'</td><td>$'+h.monto+'</td></tr>';
   });
   var egrRows='';
   egresosMes.forEach(function(e){
@@ -6468,7 +6501,10 @@ function genBalancePDF(mIdx,anioB){
    '<button class="btn" onclick="window.print()">&#128424; Imprimir / PDF</button>'+
    '<div style="text-align:center;border-bottom:3px double #1E1B4B;padding-bottom:8px;margin-bottom:10px"><img src="'+LOGO_SRC+'" alt="" style="width:62px;height:62px;border-radius:50%;object-fit:cover;margin-bottom:5px"><div style="font-size:14pt;font-weight:bold;text-transform:uppercase">Cuidado Infantil el Colibrí</div><div style="font-size:10pt;color:#555">Balance Mensual · '+mesLabel+' · Emitido: '+fecha+'</div></div>'+
    '<div class="res"><div class="rb"><div class="rv" style="color:#059669">$'+totalIng+'</div><div class="rl">Ingresos del mes ('+pagsMes.length+' pagos + '+otrosMesB.length+' extra)</div></div><div class="rb"><div class="rv" style="color:#DC2626">$'+totalEgr+'</div><div class="rl">Egresos del mes ('+egresosMes.length+' gastos)</div></div><div class="rb"><div class="rv" style="color:'+(balance>=0?'#059669':'#DC2626')+'">$'+balance+'</div><div class="rl">Balance neto</div></div></div>'+
-   '<h2>Ingresos — pagos de niños/as</h2><table><tr><th>Fecha</th><th>Estudiante</th><th>Concepto</th><th>Método</th><th>Monto</th></tr>'+(ingRows||'<tr><td colspan="5">Sin pagos este mes</td></tr>')+'<tr><td colspan="4" style="font-weight:bold;background:#D1FAE5">TOTAL PAGOS</td><td style="font-weight:bold;background:#D1FAE5">$'+totalPagosB+'</td></tr></table>'+
+   '<h2>Ingresos — pagos de niños/as (por fecha de cobro)</h2><table><tr><th>Fecha</th><th>Estudiante</th><th>Concepto</th><th>Mes que corresponde</th><th>Método</th><th>Monto</th></tr>'+(ingRows||'<tr><td colspan="6">Sin pagos este mes</td></tr>')+'<tr><td colspan="5" style="font-weight:bold;background:#D1FAE5">TOTAL PAGOS</td><td style="font-weight:bold;background:#D1FAE5">$'+totalPagosB+'</td></tr></table>'+
+   '<h2>¿A qué mes corresponde lo cobrado?</h2><table><tr><th>Cobrado en el mes (por fecha)</th><th>Corresponde a '+mesLabel+' (por mes del pago)</th><th>Diferencia</th><th>Balance según fecha de cobro</th><th>Balance según mes que corresponde</th></tr><tr><td>$'+conc.totalCobrado+'</td><td>$'+conc.totalCorresponde+'</td><td>'+(difMes>0?'+':'')+'$'+difMes+'</td><td>$'+redondear2(balance)+'</td><td>$'+balanceMes+'</td></tr></table>'+
+   (conc.otroMes.length?'<table><tr><th colspan="4">Cobrado en '+mesLabel+' pero corresponde a otro mes ($'+conc.totalOtroMes+')</th></tr>'+conc.otroMes.map(function(h){var nn=DB.ninos.find(function(n){return n.id===h.nid;});return '<tr><td>'+h.fecha+'</td><td style="text-align:left">'+(nn?nn.nom:'—')+'</td><td>'+mesDelCobro(h)+'</td><td>$'+h.monto+'</td></tr>';}).join('')+'</table>':'')+
+   (conc.deOtros.length?'<table><tr><th colspan="4">Corresponde a '+mesLabel+' pero se cobró en otro mes ($'+conc.totalDeOtros+')</th></tr>'+conc.deOtros.map(function(h){var nn=DB.ninos.find(function(n){return n.id===h.nid;});return '<tr><td>'+h.fecha+'</td><td style="text-align:left">'+(nn?nn.nom:'—')+'</td><td>'+mesDelCobro(h)+'</td><td>$'+h.monto+'</td></tr>';}).join('')+'</table>':'')+
    '<h2>Ingresos extraordinarios (otros motivos)</h2><table><tr><th>Fecha</th><th>Concepto</th><th>Descripción</th><th>Monto</th></tr>'+(otrRows||'<tr><td colspan="4">Sin ingresos extraordinarios este mes</td></tr>')+'<tr><td colspan="3" style="font-weight:bold;background:#FEF3C7">TOTAL EXTRAORDINARIOS</td><td style="font-weight:bold;background:#FEF3C7">$'+totalOtrosB+'</td></tr></table>'+
    '<h2>Egresos registrados por la administración</h2><table><tr><th>Fecha</th><th>Categoría</th><th>Concepto</th><th>Monto</th></tr>'+(egrRows||'<tr><td colspan="4">Sin egresos este mes</td></tr>')+'<tr><td colspan="3" style="font-weight:bold;background:#FEE2E2">TOTAL EGRESOS</td><td style="font-weight:bold;background:#FEE2E2">$'+totalEgr+'</td></tr></table>'+
    '<div class="firma">'+nomDirectora()+'<br>Directora — Cuidado Infantil el Colibrí</div>'+
