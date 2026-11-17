@@ -1271,13 +1271,59 @@ function loadLocalDB() {
 function loadDB() { loadLocalDB(); migrarAnioLectivo(); migrarTiposPago(); purgarFotosBorradas(); sanearUsuarios(); return true; }
 
 // ── Reiniciar todo ────────────────────────────────
+// ── Reiniciar todos los datos (PROTEGIDO) ──
+// Antes bastaban dos "Aceptar" para borrar la base de TODOS los dispositivos. Ahora: solo la directora, hay que escribir una frase,
+// y antes de borrar se descarga un respaldo completo y se guarda una copia en la nube (documento respaldo_reinicio_*).
+// Si el respaldo no se puede descargar, NO se borra nada.
 function resetDB() {
-  if (!confirm('¿Borrar TODOS los datos? No se puede deshacer.')) return;
-  if (!confirm('ATENCION: tambien se borraran los datos guardados en la nube para TODOS los dispositivos. ¿Continuar?')) return;
-  if (fsDB) fsDB.collection(FB_COL).doc(FB_DOC).delete().catch(console.error);
-  localStorage.removeItem(STORAGE_KEY);
-  localStorage.removeItem(DIRTY_KEY);
-  location.reload();
+  if (!USER || USER.rol !== 'admin') { showToast('Solo la directora puede reiniciar los datos', '#EF4444'); return; }
+  var FRASE = 'BORRAR TODO';
+  var inp = el('input', {cls:'inp', type:'text', placeholder:'Escribe ' + FRASE, autocomplete:'off'});
+  var estado = p({margin:'10px 0 0', fontSize:'12px', color:'#6B7280', minHeight:'16px'}, '');
+  var okBtn, m;
+  function frasePuesta() { return String(inp.value || '').trim().toUpperCase() === FRASE; }
+  function pintar() { okBtn.disabled = !frasePuesta(); okBtn.style.opacity = frasePuesta() ? '1' : '.45'; okBtn.style.cursor = frasePuesta() ? 'pointer' : 'not-allowed'; }
+  function ejecutar() {
+    if (!frasePuesta()) return;
+    okBtn.disabled = true; inp.disabled = true; okBtn.style.opacity = '.45';
+    estado.style.color = '#6B7280'; estado.textContent = 'Guardando respaldo…';
+    // 1) respaldo completo en este dispositivo: si falla, no se borra nada
+    try {
+      var blob = new Blob([JSON.stringify({DB:DB, USERS:USERS, fecha:new Date().toISOString(), version:'1.0'}, null, 2)], {type:'application/json'});
+      var a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+      a.download = 'colibri_respaldo_antes_de_reiniciar_' + fmt(new Date()) + '.json';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    } catch(e) {
+      estado.style.color = '#B91C1C'; estado.textContent = 'No se pudo descargar el respaldo, por eso NO se borró nada.';
+      inp.disabled = false; pintar(); return;
+    }
+    // 2) copia en la nube (si hay conexion); espera maximo 5 s
+    var copia = Promise.resolve();
+    if (fsDB && fbOnline) { try { copia = fsDB.collection(FB_COL).doc('respaldo_reinicio_' + fmt(new Date()) + '_' + Date.now()).set(armarPayload()); } catch(e) {} }
+    var espera = function(pr, ms) { return Promise.race([Promise.resolve(pr).catch(function(){}), new Promise(function(r){ setTimeout(r, ms); })]); };
+    espera(copia, 5000).then(function() {
+      estado.textContent = 'Borrando…';
+      var borrar = (fsDB && fbOnline) ? fsDB.collection(FB_COL).doc(FB_DOC).delete() : Promise.resolve();
+      return espera(borrar, 5000);
+    }).then(function() {
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(DIRTY_KEY);
+      location.reload();
+    });
+  }
+  m = modal([
+    el('h3', {style:{margin:'0 0 8px', fontWeight:900, color:'#B91C1C'}}, '⚠️ Reiniciar todos los datos'),
+    p({margin:'0 0 8px', fontSize:'13px', color:'#374151'}, 'Se borrarán los niños, pagos, asistencia, maestras, comunicados y todo lo guardado, en la nube y en TODOS los dispositivos.'),
+    p({margin:'0 0 8px', fontSize:'13px', color:'#374151'}, 'Antes de borrar, la app descargará un respaldo completo (archivo .json) y guardará otra copia en la nube. Guarda ese archivo en un lugar seguro.'),
+    p({margin:'0 0 10px', fontSize:'13px', fontWeight:700, color:'#374151'}, 'Para continuar, escribe ' + FRASE + ' y pulsa el botón rojo.'),
+    inp, estado,
+    div({display:'flex', justifyContent:'flex-end', gap:'10px', marginTop:'14px'},
+      btn('Cancelar', 'btn-light', function() { m.close(); }),
+      (okBtn = btn('⬇️ Descargar respaldo y borrar todo', 'btn-red', ejecutar)))
+  ], function() { m.close(); });
+  inp.addEventListener('input', pintar);
+  pintar();
+  setTimeout(function() { try { inp.focus(); } catch(e) {} }, 50);
 }
 
 // ── Cargar Firebase SDK dinamicamente ────────────
@@ -2862,7 +2908,7 @@ function adminConfig(main){
   // Danger zone
   const dc=el('div',{cls:'card',style:{borderLeft:'4px solid #EF4444'}});
   dc.appendChild(el('h3',{style:{margin:'0 0 10px',fontWeight:800,color:'#EF4444'}},'⚠️ Zona de peligro'));
-  dc.appendChild(p({margin:'0 0 14px',color:'#6B7280',fontSize:'13px'},'Esta acción eliminará TODOS los datos del sistema. Solo úsala si necesitas reiniciar desde cero.'));
+  dc.appendChild(p({margin:'0 0 14px',color:'#6B7280',fontSize:'13px'},'Esta acción eliminará TODOS los datos del sistema, en todos los dispositivos. Pide una confirmación escrita y descarga un respaldo antes de borrar. Solo úsala si necesitas reiniciar desde cero.'));
   dc.appendChild(btn('🗑️ Reiniciar todos los datos','btn-red',resetDB));
   main.appendChild(dc);
 }
