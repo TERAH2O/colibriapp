@@ -2850,6 +2850,11 @@ function adminConfig(main){
     },{background:'#E5E7EB',color:'#1E1B4B',border:'none',borderRadius:'10px',padding:'10px 18px',fontWeight:700,fontSize:'14px',cursor:'pointer'})
   ));
   main.appendChild(bc);
+  const rc=el('div',{cls:'card'});
+  rc.appendChild(el('h3',{style:{margin:'0 0 8px',fontWeight:800}},'🔎 Revisión de datos'));
+  rc.appendChild(p({margin:'0 0 14px',color:'#6B7280',fontSize:'13px'},'Señala pagos que conviene revisar (posibles repetidos, en $0, sin mes, de estudiantes eliminados) y otros registros dudosos. Es solo una lista: no cambia ni borra nada.'));
+  rc.appendChild(btn('🔎 Abrir revisión','btn-pri',abrirRevisionDatos));
+  main.appendChild(rc);
   main.appendChild(cardRecuperar());
   main.appendChild(cardRecuperarPlan());
   main.appendChild(p({margin:'4px 0 14px',fontSize:'12px',color:'#6B7280',textAlign:'center'},'Versión de la app: '+APP_VERSION));
@@ -3000,6 +3005,48 @@ function exportarExcel(){
 
 // ─── Recuperar registros desde respaldos anteriores ───
 const RECUP_LBL={ninos:'Niños',maestras:'Maestras',salas:'Salas',historialPagos:'Pagos cobrados',egresos:'Egresos',otrosIngresos:'Ingresos extraordinarios',pagosMae:'Sueldos de maestras',matriculas:'Matrículas',pagos:'Pagos (mensualidades)',servicios:'Servicios'};
+// ─── Revisión de datos (SOLO LECTURA): señala registros que conviene que la directora revise. No cambia ni borra nada ───
+function revisionDatos(){
+  var H=DB.historialPagos||[], N=DB.ninos||[], idsN={}; N.forEach(function(n){ idsN[n.id]=n; });
+  var nom=function(h){ var n=idsN[h.nid]; return n?n.nom:'(estudiante eliminado)'; };
+  var fila=function(h,extra){ return {nom:nom(h),concepto:h.concepto||'',mes:mesDelCobro(h),fecha:h.fecha||'',monto:redondear2(h.monto),metodo:h.metodo||'',extra:extra||''}; };
+  var grupos={}; H.forEach(function(h){ if(esPagoPension(h)){ var k=h.nid+'|'+mesDelCobro(h); (grupos[k]=grupos[k]||[]).push(h); } });
+  var repetidos=[]; Object.keys(grupos).forEach(function(k){ var g=grupos[k]; if(g.length>1){ var iguales=g.every(function(x){ return Number(x.monto)===Number(g[0].monto); });
+    g.forEach(function(h){ repetidos.push(fila(h,iguales?'mismo monto que otro pago del mes: posible repetido':'montos distintos: posible abono')); }); } });
+  var secs=[
+    {id:'repetidos',tit:'Posibles pagos repetidos',desc:'Un mismo estudiante con 2 o más pagos de pensión del mismo mes. Si es un abono, está bien; si es un error, hay que eliminar uno desde Finanzas.',filas:repetidos},
+    {id:'cero',tit:'Pagos con monto $0 que no son beca',desc:'Pagos registrados en $0 con un método distinto de "Beca".',filas:H.filter(function(h){ return !Number(h.monto)&&h.metodo!=='beca'; }).map(function(h){ return fila(h); })},
+    {id:'sinmes',tit:'Pagos de pensión sin mes asignado',desc:'Pagos antiguos sin el campo "mes". El mes se deduce del concepto o de la fecha (columna Mes). Conviene confirmarlo con ✏️ Editar.',filas:H.filter(function(h){ var ti=tipoInfo(tipoPagoId(h)); return ti.mes&&!h.mes; }).map(function(h){ return fila(h); })},
+    {id:'otromes',tit:'Cobrados en un mes pero que corresponden a otro',desc:'Es normal en pagos atrasados o adelantados. Son los pagos que mueven la diferencia en el Balance.',filas:H.filter(function(h){ return mesDesdeFecha(h.fecha)!==mesDelCobro(h); }).map(function(h){ return fila(h,'cobrado en '+mesDesdeFecha(h.fecha)); })},
+    {id:'eliminados',tit:'Pagos de estudiantes eliminados',desc:'Se conservan en el historial y suman en el Balance, pero ya no aparecen en ninguna ficha.',filas:H.filter(function(h){ return !idsN[h.nid]; }).map(function(h){ return fila(h); })},
+    {id:'matorfana',tit:'Matrículas sin estudiante',desc:'Registros de matrícula de estudiantes que ya no existen (Finanzas → 🧹 Depurar registros los quita sin tocar los pagos).',filas:(DB.matriculas||[]).filter(function(m){ return !idsN[m.nid]; }).map(function(m){ return {nom:'(estudiante eliminado)',concepto:'Matrícula '+(m.estado||''),mes:'',fecha:'',monto:redondear2(m.monto),metodo:'',extra:''}; })},
+    {id:'sinanio',tit:'Estudiantes sin año lectivo',desc:'Fichas sin el campo año lectivo. No se tocan; solo se avisa.',filas:N.filter(function(n){ return !n.anioLectivo; }).map(function(n){ return {nom:n.nom,concepto:'Estado: '+estadoNino(n),mes:'',fecha:'',monto:'',metodo:'',extra:''}; })}
+  ];
+  return secs;
+}
+function csvRevisionDatos(secs){
+  var q=function(v){ return '"'+String(v==null?'':v).replace(/"/g,'""')+'"'; }, out='Sección,Estudiante,Concepto,Mes,Fecha de cobro,Monto,Método,Observación\n';
+  secs.forEach(function(sc){ sc.filas.forEach(function(f){ out+=[sc.tit,f.nom,f.concepto,f.mes,f.fecha,f.monto,f.metodo,f.extra].map(q).join(',')+'\n'; }); });
+  return out;
+}
+function abrirRevisionDatos(){
+  var secs=revisionDatos(), cont=div({maxHeight:'62vh',overflowY:'auto',paddingRight:'4px'});
+  cont.appendChild(p({margin:'0 0 12px',fontSize:'12px',color:'#6B7280'},'Esta lista es solo para revisar: no cambia ni borra ningún dato. Para corregir un pago, entra a Finanzas, busca al estudiante y usa ✏️ Editar.'));
+  secs.forEach(function(sc){
+    var h=div({display:'flex',gap:'8px',alignItems:'center',marginTop:'14px'},el('h4',{style:{margin:0,fontWeight:800,fontSize:'14px',flex:1}},sc.tit),el('span',{cls:'badge',style:{background:sc.filas.length?'#FEF3C7':'#D1FAE5',color:sc.filas.length?'#B45309':'#047857'}},sc.filas.length?String(sc.filas.length):'✅ 0'));
+    cont.appendChild(h); cont.appendChild(p({margin:'2px 0 6px',fontSize:'11px',color:'#6B7280'},sc.desc));
+    sc.filas.slice(0,60).forEach(function(f){
+      cont.appendChild(div({display:'flex',gap:'8px',alignItems:'center',padding:'5px 0',borderBottom:'1px solid #F3F4F6',flexWrap:'wrap'},
+        div({flex:1,minWidth:'170px'},p({margin:0,fontWeight:700,fontSize:'12px'},f.nom),p({margin:0,fontSize:'11px',color:'#6B7280'},[f.concepto,f.mes&&('mes '+f.mes),f.fecha&&('cobrado '+f.fecha),f.extra].filter(Boolean).join(' · '))),
+        f.monto!==''?p({margin:0,fontWeight:900,fontSize:'13px',color:'#1E1B4B'},'$'+f.monto):null));
+    });
+    if(sc.filas.length>60) cont.appendChild(p({margin:'6px 0 0',fontSize:'11px',color:'#6B7280'},'Mostrando 60 de '+sc.filas.length+'. Descarga la lista completa con el botón de abajo.'));
+  });
+  var m=modal([el('h3',{style:{margin:'0 0 6px',fontWeight:900}},'🔎 Revisión de datos'),cont,
+    div({display:'flex',justifyContent:'flex-end',gap:'10px',marginTop:'14px',flexWrap:'wrap'},
+      btn('⬇️ Descargar lista (CSV)','btn-light',function(){ var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\ufeff'+csvRevisionDatos(secs)],{type:'text/csv;charset=utf-8'})); a.download='Revision_datos_'+fmt(new Date())+'.csv'; document.body.appendChild(a); a.click(); document.body.removeChild(a); }),
+      btn('Cerrar','',function(){ m.close(); }))],function(){ m.close(); });
+}
 function cardRecuperar(){
   const c=el('div',{cls:'card'});
   c.appendChild(el('h3',{style:{margin:'0 0 8px',fontWeight:800}},'🛟 Recuperar registros de días anteriores'));
