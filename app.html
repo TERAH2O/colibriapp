@@ -428,6 +428,7 @@ var fbPendiente     = false; // cambios en cola esperando subir
 var fbTimer         = null;  // debounce de guardado
 var fbDirtyAlInicio = false; // quedaron cambios sin subir de una sesion anterior
 var fbReglasAvisado = false;
+var fbListenerReintentos = 0;
 
 // ID estable de este dispositivo (para reconocer el eco de mis propios guardados)
 var DEVICE_ID = (function() {
@@ -615,6 +616,21 @@ function mergePlanDatos(data) {
   return extra;
 }
 
+// Aviso visible (no solo console.warn) cuando el dispositivo no puede guardar su copia local
+var localLlenoAvisado = 0;
+function avisarLocalLleno() {
+  fbLogPush('❌ No se pudo guardar la copia local: memoria del dispositivo llena');
+  if (Date.now() - localLlenoAvisado < 60000) return;
+  localLlenoAvisado = Date.now();
+  try { showToast('⚠️ La memoria de este dispositivo está llena: tus cambios se envían a la nube, pero no los cierres hasta ver ☁️ Sincronizado.', '#B45309'); } catch(e) {}
+}
+// Aviso visible para TODOS los roles cuando la nube no recibe los cambios
+var nubeFalloAvisado = 0;
+function avisarFalloNube(codigo) {
+  if (Date.now() - nubeFalloAvisado < 120000) return;
+  nubeFalloAvisado = Date.now();
+  try { showToast('⚠️ No se pudo guardar en la nube (' + (codigo || 'sin conexión') + '). Tus cambios están en este dispositivo y se reintentarán solos.', '#B45309'); } catch(e) {}
+}
 function guardarLocal() {
   try {
     DB._savedAt = Date.now();
@@ -626,7 +642,7 @@ function guardarLocal() {
       localStorage.setItem(STORAGE_KEY, txt);
       fbLogPush('⚠️ Memoria del dispositivo llena: se liberaron copias diarias antiguas');
     }
-  } catch(e) { console.warn('[Firebase] localStorage:', e); }
+  } catch(e) { console.warn('[Firebase] localStorage:', e); avisarLocalLleno(); }
   try { localStorage.setItem(PLAN_RESPALDO_KEY, JSON.stringify({planif: DB.planif || {}, planMes: DB.planMes || {}, planifBorradas: DB.planifBorradas || []})); } catch(e) {}
   histLocalDiario();
 }
@@ -789,6 +805,9 @@ function armarPayload() {
   };
 }
 
+// Tamaño real en bytes UTF-8 (Firestore cuenta bytes, no caracteres: acentos y emojis pesan mas)
+function tamanoBytes(o) { return new Blob([JSON.stringify(o)]).size; }
+
 // ── Subir TODA la DB a Firestore (con cola, sin perder cambios) ──
 function guardarEnFirebase() {
   if (!fsDB || !fbOnline) { fbPendiente = true; return; }
@@ -819,9 +838,10 @@ function guardarEnFirebase() {
         if (d.fotosBorradas) DB.fotosBorradas = (DB.fotosBorradas||[]).concat(d.fotosBorradas.filter(function(id){return (DB.fotosBorradas||[]).indexOf(id)<0;}));
       }
       payload = armarPayload();
-      try { tam = JSON.stringify(payload).length; } catch(e) {}
-      try { payload.fotos = fotosPayload(820000 - tam); tam = JSON.stringify(payload).length; } catch(e) {}
-      if (tam > 900000) {
+      try { tam = tamanoBytes(payload); } catch(e) {}
+      // Las fotos ya viajan una por documento: solo se duplican dentro de maindata si la coleccion no tiene permiso
+      if (fotosSinPermiso) { try { payload.fotos = fotosPayload(820000 - tam); tam = tamanoBytes(payload); } catch(e) {} }
+      if (tam > 700000) {
         fbLogPush('⚠️ Datos cerca del limite de 1MB de Firestore (' + Math.round(tam/1024) + ' KB)');
         if (USER && USER.rol === 'admin') showToast('⚠️ La base de datos está casi llena (' + Math.round(tam/1024) + ' KB de 1024). Avisa al soporte.', '#B45309');
       }
@@ -845,6 +865,7 @@ function guardarEnFirebase() {
       fbPendiente = true; // no perder el cambio: reintentar
       fbLogPush('❌ Error al guardar: ' + err.code + ' — ' + err.message);
       setFbStatus('error', err.code);
+      avisarFalloNube(err.code);
       if (err.code === 'permission-denied') {
         mostrarErrorReglas();
       } else if (err.code === 'invalid-argument' || /exceeds|too large|maximum/i.test(err.message||'')) {
@@ -1043,6 +1064,7 @@ function iniciarEscucha() {
       function(snap) {
         var esPrimera = !fbPrimeraCarga;
         fbPrimeraCarga = true;
+        fbListenerReintentos = 0;
 
         // Mi propia escritura aun sin confirmar por el servidor — ignorar
         if (snap.metadata && snap.metadata.hasPendingWrites) return;
@@ -1088,7 +1110,13 @@ function iniciarEscucha() {
       function(err) {
         fbLogPush('❌ onSnapshot: ' + err.code + ' — ' + err.message);
         setFbStatus('error', err.code);
+        avisarFalloNube(err.code);
         if (err.code === 'permission-denied') mostrarErrorReglas();
+        // El listener muere al fallar: volver a suscribirse para no quedar sin sincronizar para siempre
+        fbListenerReintentos = (fbListenerReintentos || 0) + 1;
+        var espera = Math.min(60000, 3000 * fbListenerReintentos);
+        fbLogPush('🔁 Reintentando escucha en ' + Math.round(espera/1000) + 's (intento ' + fbListenerReintentos + ')');
+        setTimeout(function(){ iniciarEscucha(); }, espera);
       }
     );
   fbLogPush('👂 Escucha activa en ' + FB_COL + '/' + FB_DOC);
@@ -1109,14 +1137,22 @@ function conectarFirebase() {
     fbOnline = true;
     fbLogPush('✅ Firestore conectado · dispositivo ' + DEVICE_ID);
     // Auth anonima por si las reglas la requieren (no bloquea si esta deshabilitada)
+    // Se espera a que termine el inicio de sesion antes de abrir las escuchas: si las reglas exigen auth,
+    // abrirlas antes provoca permission-denied y el listener muere (max 4s de espera)
+    var escuchasIniciadas = false;
+    function arrancarEscuchas() {
+      if (escuchasIniciadas) return; escuchasIniciadas = true;
+      iniciarEscucha();
+      escucharFotos();
+      setTimeout(subirFotosPendientes, 1800);
+    }
     try {
       firebase.auth().signInAnonymously()
         .then(function() { fbLogPush('🔑 Sesion anonima iniciada'); })
-        .catch(function(e) { fbLogPush('Auth anonima no disponible (' + e.code + ') — ok si las reglas son publicas'); });
-    } catch(e) {}
-    iniciarEscucha();
-    escucharFotos();
-    setTimeout(subirFotosPendientes, 1800);
+        .catch(function(e) { fbLogPush('Auth anonima no disponible (' + e.code + ') — ok si las reglas son publicas'); })
+        .then(arrancarEscuchas);
+      setTimeout(arrancarEscuchas, 4000);
+    } catch(e) { arrancarEscuchas(); }
     // Failsafe: si en 12s no llega ningun snapshot, avisar
     setTimeout(function() {
       if (!fbPrimeraCarga) {
@@ -3673,10 +3709,12 @@ function adminNinos(main){
       div({display:'flex',gap:'10px'},
         btn('Registrar','btn-pri',()=>{if(!f.nom||!f.sid)return;const i=DB.ninos.length+1;
         const newNid = uid();
-        const newCod = 'PAP-' + String(DB.ninos.length + 1).padStart(3,'0');
+        // El numero sale del mayor codigo existente (no de la cantidad de niños): al borrar un niño la cantidad baja y se repetian codigos
+        const maxCod = USERS.concat(DB.ninos.map(x=>({cod:x.codp}))).reduce((m,u)=>{const k=/^PAP-(\d+)$/i.exec(String(u.cod||'').trim());return k?Math.max(m,parseInt(k[1],10)):m;},0);
+        const newCod = 'PAP-' + String(maxCod + 1).padStart(3,'0');
         // Ensure code is unique
         let codFinal = newCod;
-        let attempt = DB.ninos.length + 1;
+        let attempt = maxCod + 1;
         while(USERS.find(u => u.cod === codFinal)) {
           attempt++;
           codFinal = 'PAP-' + String(attempt).padStart(3,'0');
@@ -5827,7 +5865,7 @@ function openFicha(nino){
     if(nino.foto){const img=el('img',{src:nino.foto,style:{width:'100%',height:'100%',objectFit:'cover'}});avDiv.appendChild(img);}
     else avDiv.appendChild(document.createTextNode(nino.ava));
     const fu=el('input',{type:'file',accept:'image/*',style:{display:'none'}});
-    fu.addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{nino.foto=ev.target.result;draw();};r.readAsDataURL(f);});
+    fu.addEventListener('change',e=>{const f=e.target.files[0];if(!f)return;comprimirImg(f,320,du=>{nino.foto=du;saveDB();draw();});});
     const fb=el('button',{style:{position:'absolute',bottom:0,right:0,background:'#F59E0B',border:'none',borderRadius:'50%',width:'25px',height:'25px',cursor:'pointer',fontSize:'12px',color:'#fff'}},document.createTextNode('📷'));
     fb.addEventListener('click',()=>fu.click());
     avDiv.appendChild(fu);avDiv.appendChild(fb);
