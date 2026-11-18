@@ -293,7 +293,7 @@ function dirData(){ if(!DB.directora||typeof DB.directora!=='object') DB.directo
 function nomDirectora(){ return (DB.nombreDirectora||'').trim() || 'Directora'; }
 function fotoDirectora(){ return dirData().foto || null; }
 function cKeyComu(c){ return c.id || (c.titulo+'|'+c.fecha); }
-function comusDe(u){ if(!u)return[]; if(u.rol==='papa'){ var n=DB.ninos.find(function(x){return x.id===u.nid;}); var sid=n?n.sid:null; return (DB.comus||[]).filter(function(c){ if(c.sid==='nino') return c.nid===u.nid; return c.sid==='all'||(sid&&c.sid===sid); }); } return DB.comus||[]; }
+function comusDe(u){ if(!u)return[]; if(papaSinAcceso(u)) return []; if(u.rol==='papa'){ var n=DB.ninos.find(function(x){return x.id===u.nid;}); var sid=n?n.sid:null; return (DB.comus||[]).filter(function(c){ if(c.sid==='nino') return c.nid===u.nid; return c.sid==='all'||(sid&&c.sid===sid); }); } return DB.comus||[]; }
 // ── WhatsApp ──────────────────────────────────────
 function waNum(num){ var d=String(num||'').replace(/[^0-9]/g,''); if(!d)return ''; if(d.indexOf('593')===0) return d; if(d.length===10&&d[0]==='0') return '593'+d.slice(1); if(d.length===9&&d[0]==='9') return '593'+d; return d; }
 function waLink(num,msg){ var d=waNum(num); if(!d)return null; return 'https://wa.me/'+d+(msg?'?text='+encodeURIComponent(msg):''); }
@@ -322,7 +322,7 @@ function proximosCumples(){
     return e;
   }
   var lista=[];
-  (DB.ninos||[]).forEach(function(n){ var df=diasPara(n.nac); if(df===0||df===1) lista.push({tipo:'nino',id:n.id,sid:n.sid,nom:n.nom,dias:df,edad:edadQueCumple(n.nac),ava:n.ava||'🌟'}); });
+  ninosActivos().forEach(function(n){ var df=diasPara(n.nac); if(df===0||df===1) lista.push({tipo:'nino',id:n.id,sid:n.sid,nom:n.nom,dias:df,edad:edadQueCumple(n.nac),ava:n.ava||'🌟'}); });
   (DB.maestras||[]).forEach(function(m){ var df=diasPara(m.nac); if(df===0||df===1) lista.push({tipo:'maestra',id:m.id,nom:m.nom,dias:df,edad:null,ava:m.ava||'👩‍🏫'}); });
   var ddc=dirData(); if(ddc.nac){ var dfd=diasPara(ddc.nac); if(dfd===0||dfd===1) lista.push({tipo:'directora',id:'dir',nom:nomDirectora(),dias:dfd,edad:null,ava:'👩‍💼'}); }
   lista.sort(function(a,b){return a.dias-b.dias;});
@@ -1444,7 +1444,7 @@ function restaurarSesion(){
   if(!s||!s.cod) return false;
   try{ sanearUsuarios(); }catch(e){}
   var u=USERS.find(function(x){ return x.cod===s.cod && x.rol===s.rol; });
-  if(!u) return false;
+  if(!u||papaSinAcceso(u)) return false;
   USER=u;
   var lp=document.getElementById('loginPage'), ap=document.getElementById('appPage');
   if(lp) lp.style.display='none';
@@ -1457,6 +1457,7 @@ function restaurarSesion(){
 function verificarSesion(){
   if (!USER) return;
   var vigente = USERS.find(function(u){ return u.cod === USER.cod && u.rol === USER.rol; });
+  if (vigente && papaSinAcceso(vigente)) { showToast('Este estudiante ya no está activo en el centro', '#EF4444'); try { logout(); } catch(e) { location.reload(); } return; }
   if (vigente) { USER = vigente; return; }
   showToast('🔐 Tu código de acceso cambió — vuelve a ingresar','#EF4444');
   try { logout(); } catch(e) { location.reload(); }
@@ -1623,11 +1624,12 @@ function iniciarAvisosPapa(){
 function tryLogin(){
   const val = document.getElementById('loginInput').value.trim().toUpperCase();
   sanearUsuarios();
-  let u = USERS.find(x => x.cod === val);
+  let u = USERS.find(x => x.cod === val), inactivoMsg = false;
   // el código debe coincidir con la ficha vigente; los anteriores ya no sirven
   if(u && u.rol==='papa'){
     const n=(DB.ninos||[]).find(x=>x.id===u.nid);
     if(!n || String(n.codp||'').trim().toUpperCase()!==val) u=null;
+    else if(!ninoActivo(n)) { u=null; inactivoMsg=true; }
   }
   if(u && u.rol==='maestra' && u.mid){
     const m=(DB.maestras||[]).find(x=>x.id===u.mid);
@@ -1640,6 +1642,8 @@ function tryLogin(){
     document.getElementById('appPage').classList.remove('hidden');
     startApp();
   } else {
+    var le = document.getElementById('loginErr'); if (le.getAttribute('data-def') === null) le.setAttribute('data-def', le.textContent);
+    le.textContent = inactivoMsg ? 'Este estudiante ya no está activo en el centro. Comunícate con la administración.' : le.getAttribute('data-def');
     document.getElementById('loginErr').style.display = 'block';
     document.getElementById('loginInput').style.border = '2px solid #EF4444';
     document.getElementById('loginInput').focus();
@@ -2369,14 +2373,14 @@ function adminBalance(main){
     main.appendChild(nav);
 
     // Ingresos del mes (from historialPagos)
-    const pagsMes=(DB.historialPagos||[]).filter(h=>{ try{const d=ymd(h.fecha);return d.getMonth()===mesIdx&&d.getFullYear()===anio;}catch{return false;} });
+    const pagsMes=(DB.historialPagos||[]).filter(h=>{ try{const d=ymd(h.fecha);return d.getMonth()===mesIdx&&d.getFullYear()===anio&&pagoCuentaEnBalance(h);}catch{return false;} });
     const totalPagos=pagsMes.reduce((s,h)=>s+Number(h.monto||0),0);
     if(!DB.otrosIngresos)DB.otrosIngresos=[];
     const otrosMes=DB.otrosIngresos.filter(o=>enMes(o,mesLabel,mesIdx,anio));
     const totalOtros=otrosMes.reduce((s,o)=>s+Number(o.monto||0),0);
     const totalIngreso=totalPagos+totalOtros;
     // Ingresos proyectados (matriculas activas)
-    const ingProyectado=DB.matriculas?DB.matriculas.filter(m=>m.estado!=='vencido').reduce((s,m)=>s+matMonto(m),0):0;
+    const ingProyectado=matriculasActivas().filter(m=>m.estado!=='vencido').reduce((s,m)=>s+matMonto(m),0);
 
     // Egresos del mes
     const egresosMes=(DB.egresos||[]).filter(e=>enMes(e,mesLabel,mesIdx,anio));
@@ -3207,12 +3211,12 @@ function getAdminNav(){
 }
 
 function adminHome(main){
-  const pres=DB.ninos.filter(n=>n.asis[fmt(HOY)]==='P').length;
+  const pres=ninosActivos().filter(n=>n.asis[fmt(HOY)]==='P').length;
   const mesHoyAH=mesLbl(new Date().getMonth(),new Date().getFullYear());
   const pend=ninosActivos().filter(n=>!ninoBeca(n)&&!ninoVacas(n,mesHoyAH)&&!pagoPensionDe(n.id,mesHoyAH)).length;
   main.appendChild(shdr('Panel de Administración',new Date().toLocaleDateString('es-EC',{weekday:'long',day:'numeric',month:'long'})));
   const g=el('div',{cls:'g4',style:{marginBottom:'18px'}});
-  [['Niños hoy',pres+'/'+DB.ninos.length,'👶','#7C3AED','#EDE9FE'],['Salas',DB.salas.length,'🏫','#06B6D4','#CFFAFE'],['Maestras',DB.maestras.length,'👩‍🏫','#10B981','#D1FAE5'],['Pagos pend.',pend,'⏳','#EF4444','#FEE2E2']].forEach(([l,v,i,c,bg])=>g.appendChild(statCard(l,v,i,c,bg)));
+  [['Niños hoy',pres+'/'+ninosActivos().length,'👶','#7C3AED','#EDE9FE'],['Salas',DB.salas.length,'🏫','#06B6D4','#CFFAFE'],['Maestras',DB.maestras.length,'👩‍🏫','#10B981','#D1FAE5'],['Pagos pend.',pend,'⏳','#EF4444','#FEE2E2']].forEach(([l,v,i,c,bg])=>g.appendChild(statCard(l,v,i,c,bg)));
   main.appendChild(g);
   main.appendChild(cardCumplesHoy());
   const g2=el('div',{cls:'g2'});
@@ -3220,7 +3224,7 @@ function adminHome(main){
   const sc=el('div',{cls:'card'});
   sc.appendChild(el('h3',{style:{margin:'0 0 14px',fontWeight:800}},'Resumen por sala'));
   DB.salas.forEach(s=>{
-    const ns=DB.ninos.filter(n=>n.sid===s.id), mtr=DB.maestras.find(m=>m.id===s.mid);
+    const ns=ninosActivos(s.id), mtr=DB.maestras.find(m=>m.id===s.mid);
     const pr=ns.filter(n=>n.asis[fmt(HOY)]==='P').length;
     sc.appendChild(div({display:'flex',gap:'12px',alignItems:'center',padding:'10px 0',borderBottom:'1px solid #E5E7EB'},
       div({width:'38px',height:'38px',borderRadius:'10px',background:s.cL,display:'flex',alignItems:'center',justifyContent:'center',fontSize:'18px',flexShrink:0},s.emo),
@@ -3304,7 +3308,7 @@ function mesDelCobro(h){ var ti=tipoInfo(tipoPagoId(h)); return ti.mes ? (hpMes(
 function redondear2(v){ return Math.round((Number(v)||0)*100)/100; }
 // Conciliacion de cobros de un mes: lo que entro en el mes (por fecha) frente a lo que corresponde al mes (por mes del pago). No modifica datos.
 function conciliarCobrosMes(mesLabel){
-  var H=DB.historialPagos||[], suma=function(a){ return redondear2(a.reduce(function(t,h){ return t+Number(h.monto||0); },0)); };
+  var H=(DB.historialPagos||[]).filter(pagoCuentaEnBalance), suma=function(a){ return redondear2(a.reduce(function(t,h){ return t+Number(h.monto||0); },0)); };
   var cobrados=H.filter(function(h){ return mesDesdeFecha(h.fecha)===mesLabel; });
   var corresponden=H.filter(function(h){ return mesDelCobro(h)===mesLabel; });
   var otroMes=cobrados.filter(function(h){ return mesDelCobro(h)!==mesLabel; });
@@ -3318,6 +3322,14 @@ const EST_NINO={activo:{lbl:'Activo',ico:'✅',c:'#10B981',bg:'#D1FAE5'},egresad
 function estadoNino(n){ var e=(n&&n.estado)||'activo'; if(e==='culmino')e='egresado'; return EST_NINO[e]?e:'activo'; }
 function ninoActivo(n){ return !!n && estadoNino(n)==='activo'; }
 function ninosActivos(sid){ return DB.ninos.filter(n=>ninoActivo(n)&&(!sid||n.sid===sid)); }
+// Egresados y retirados se conservan en el registro, pero no cuentan en indicadores, salas, pagos pendientes ni accesos.
+// Mes (AAAA-MM) en que el niño dejó el centro ('' si sigue activo o no hay fecha de baja)
+function mesBajaNino(n){ if(!n||ninoActivo(n)) return ''; return String(n.egresoFecha||n.retiroFecha||'').slice(0,7); }
+// Un cobro cuenta en el Balance mientras el niño estuvo activo: hasta el mes de su baja. Los de niños eliminados o sin fecha de baja se conservan.
+function pagoCuentaEnBalance(h){ var n=(DB.ninos||[]).find(function(x){ return x.id===h.nid; }); var b=mesBajaNino(n); if(!b) return true; return String(h.fecha||'').slice(0,7)<=b; }
+function matriculasActivas(){ var ids={}; ninosActivos().forEach(function(n){ ids[n.id]=1; }); return (DB.matriculas||[]).filter(function(m){ return ids[m.nid]; }); }
+// Papa de un niño egresado/retirado: ya no tiene acceso mientras el niño no este activo
+function papaSinAcceso(u){ if(!u||u.rol!=='papa') return false; var n=(DB.ninos||[]).find(function(x){ return x.id===u.nid; }); return !!n&&!ninoActivo(n); }
 function ninoVacas(n,mes){ return ((n&&n.vacas)||[]).indexOf(mes)>=0; }
 function ninoBeca(n){ const m=(DB.matriculas||[]).find(x=>x.nid===n.id); return !!m&&(m.estado==='beca'||Number(m.descuento)>=100); }
 // Meses anteriores sin pago de pensión (desde la fecha de ingreso, máx. 12 meses atrás)
@@ -3352,7 +3364,7 @@ function adminSalas(main){
     main.appendChild(shdr('Salas','Cada sala define el servicio y los días de clase',btn('+ Nueva sala','btn-pri',openModal)));
     const g=el('div',{cls:'g3'});
     DB.salas.forEach(s=>{
-      const ns=DB.ninos.filter(n=>n.sid===s.id), mtr=DB.maestras.find(m=>m.id===s.mid);
+      const ns=ninosActivos(s.id), mtr=DB.maestras.find(m=>m.id===s.mid);
       const sv=getSvcInfo(s.servicio);
       const c=el('div',{cls:'card',style:{borderTop:'4px solid '+s.c}});
       c.appendChild(p({fontSize:'32px',marginBottom:'8px'},s.emo));
@@ -3996,7 +4008,7 @@ function adminFinanzas(main){
 
   // Ensure every nino has a matricula entry
   function ensureMatriculas(){
-    DB.ninos.forEach(n=>{
+    ninosActivos().forEach(n=>{
       if(!DB.matriculas) DB.matriculas=[];
       if(!DB.historialPagos) DB.historialPagos=[];
       if(!DB.matriculas.find(m=>m.nid===n.id)){
@@ -4023,15 +4035,18 @@ function adminFinanzas(main){
       vistosNid[m.nid]=1;return true;
     });
     const matsSobrantes=(DB.matriculas||[]).length-matsOk.length;
-    const totalMensual = matsOk.filter(m=>m.estado!=='vencido').reduce((s,m)=>s+matMonto(m),0);
+    // Indicadores y listado: solo estudiantes activos (las matrículas de egresados/retirados se conservan, pero no cuentan)
+    const idsActF=new Set(ninosActivos().map(n=>n.id));
+    const matsVig=matsOk.filter(m=>idsActF.has(m.nid));
+    const totalMensual = matsVig.filter(m=>m.estado!=='vencido').reduce((s,m)=>s+matMonto(m),0);
     const totalAnual   = totalMensual * 12;
     const porServicio  = getSvcs().map(sv=>({
       ...sv,
-      count: matsOk.filter(m=>m.servicio===sv.id).length,
-      total: matsOk.filter(m=>m.servicio===sv.id).reduce((s,m)=>s+matMonto(m),0)
+      count: matsVig.filter(m=>m.servicio===sv.id).length,
+      total: matsVig.filter(m=>m.servicio===sv.id).reduce((s,m)=>s+matMonto(m),0)
     }));
     const porEstado = ESTADOS.map(es=>({
-      ...es, count: matsOk.filter(m=>m.estado===es.id).length
+      ...es, count: matsVig.filter(m=>m.estado===es.id).length
     }));
 
     main.appendChild(shdr('Finanzas & Matrículas',mesActual,btn('📄 Exportar PDF','btn-pri',()=>genFinanzasPDF())));
@@ -4041,8 +4056,8 @@ function adminFinanzas(main){
     [
       {l:'Ingreso mensual proyectado', v:'$'+totalMensual, ico:'💰', c:'#7C3AED', bg:'#EDE9FE'},
       {l:'Ingreso anual proyectado',   v:'$'+totalAnual,   ico:'📈', c:'#10B981', bg:'#D1FAE5'},
-      {l:'Total estudiantes',          v:DB.ninos.length,  ico:'👶', c:'#06B6D4', bg:'#CFFAFE'},
-      {l:'Becas / descuentos',          v:matsOk.filter(m=>m.estado==='beca'||Number(m.descuento)>0).length, ico:'🎓', c:'#8B5CF6', bg:'#EDE9FE'}
+      {l:'Total estudiantes',          v:ninosActivos().length,  ico:'👶', c:'#06B6D4', bg:'#CFFAFE'},
+      {l:'Becas / descuentos',          v:matsVig.filter(m=>m.estado==='beca'||Number(m.descuento)>0).length, ico:'🎓', c:'#8B5CF6', bg:'#EDE9FE'}
     ].forEach(s=>{
       const c=el('div',{cls:'stat-card'});
       c.appendChild(div({display:'flex',justifyContent:'space-between',alignItems:'flex-start'},
@@ -4166,7 +4181,7 @@ function adminFinanzas(main){
     // Estado badges summary + filter
     const estRow=div({display:'flex',gap:'10px',marginBottom:'18px',flexWrap:'wrap',alignItems:'center'});
     estRow.appendChild(p({margin:0,fontSize:'12px',fontWeight:700,color:'#6B7280',flexShrink:0},'Filtrar por estado:'));
-    [{id:'todos',label:'Todos',c:'#1E1B4B',bg:'#E5E7EB',ico:'📋',count:matsOk.length},...porEstado].forEach(es=>{
+    [{id:'todos',label:'Todos',c:'#1E1B4B',bg:'#E5E7EB',ico:'📋',count:matsVig.length},...porEstado].forEach(es=>{
       const active=filtroEstado===es.id;
       const b=el('button',{style:{display:'flex',alignItems:'center',gap:'6px',padding:'7px 14px',borderRadius:'99px',border:'2px solid '+(active?es.c:'#E5E7EB'),background:active?es.bg:'#fff',color:active?es.c:'#6B7280',fontWeight:active?800:600,fontSize:'13px',cursor:'pointer'}},
         document.createTextNode(es.ico+' '+es.label+' ('+es.count+')')
@@ -4177,7 +4192,7 @@ function adminFinanzas(main){
     main.appendChild(estRow);
 
     // ── Tabla principal ─────────────────────────
-    const filtered = matsOk.filter(m=>{
+    const filtered = matsVig.filter(m=>{
       const srv = filtroServicio==='todos'||m.servicio===filtroServicio;
       const est = filtroEstado==='todos'||m.estado===filtroEstado;
       return srv && est;
@@ -4699,7 +4714,7 @@ function adminReportes(main){
   ));
   DB.salas.forEach(s=>{
     const mtr=DB.maestras.find(m=>m.id===s.mid);
-    const ns=DB.ninos.filter(n=>n.sid===s.id);
+    const ns=ninosActivos(s.id);
     ac.appendChild(div({display:'flex',gap:'12px',alignItems:'center',padding:'12px',background:s.cL,borderRadius:'12px',marginBottom:'10px'},
       span({fontSize:'22px'},s.emo),
       div({flex:1},p({margin:0,fontWeight:800},s.nom),p({margin:0,fontSize:'12px',color:'#6B7280'},(mtr?mtr.nom:'—')+' · '+ns.length+' niños')),
@@ -6558,12 +6573,12 @@ function genAsistencia(sala){
 function genFinanzasPDF(){
   var fecha=new Date().toLocaleDateString('es-EC',{day:'numeric',month:'long',year:'numeric'});
   var mats=(DB.matriculas||[]);
-  var totalMes=mats.filter(function(m){return m.estado!=='vencido'&&DB.ninos.some(function(n){return n.id===m.nid;});}).reduce(function(s,m){return s+matMonto(m);},0);
-  var pagos=(DB.historialPagos||[]).slice().reverse();
+  var totalMes=mats.filter(function(m){return m.estado!=='vencido'&&ninosActivos().some(function(n){return n.id===m.nid;});}).reduce(function(s,m){return s+matMonto(m);},0);
+  var pagos=(DB.historialPagos||[]).filter(pagoCuentaEnBalance).slice().reverse();
   var totalCob=pagos.reduce(function(s,h){return s+Number(h.monto||0);},0);
   var estMap={vigente:'Vigente',por_vencer:'Por vencer',vencido:'Vencido',beca:'Beca',descuento:'Descuento'};
   var matRows='';
-  DB.ninos.forEach(function(n,i){
+  ninosActivos().forEach(function(n,i){
     var sala=DB.salas.find(function(s){return s.id===n.sid;});
     var mat=mats.find(function(m){return m.nid===n.id;});
     var sv=mat?getSvcInfo(mat.servicio):{label:'—'};
@@ -6583,7 +6598,7 @@ function genFinanzasPDF(){
    '.btn{position:fixed;bottom:20px;right:20px;background:#7C3AED;color:#fff;border:none;border-radius:8px;padding:12px 24px;font-size:12pt;cursor:pointer}</style></head><body>'+
    '<button class="btn" onclick="window.print()">&#128424; Imprimir / PDF</button>'+
    '<div style="text-align:center;border-bottom:3px double #1E1B4B;padding-bottom:8px;margin-bottom:10px"><img src="'+LOGO_SRC+'" alt="" style="width:62px;height:62px;border-radius:50%;object-fit:cover;margin-bottom:5px"><div style="font-size:14pt;font-weight:bold;text-transform:uppercase">Cuidado Infantil el Colibrí</div><div style="font-size:10pt;color:#555">Reporte Financiero General · Emitido: '+fecha+'</div></div>'+
-   '<div class="res"><div class="rb"><div class="rv">'+DB.ninos.length+'</div><div class="rl">Estudiantes</div></div><div class="rb"><div class="rv">$'+totalMes+'</div><div class="rl">Ingreso mensual proyectado</div></div><div class="rb"><div class="rv">$'+totalCob+'</div><div class="rl">Total cobrado</div></div><div class="rb"><div class="rv">'+mats.filter(function(m){return Number(m.descuento)>0;}).length+'</div><div class="rl">Becas / descuentos</div></div></div>'+
+   '<div class="res"><div class="rb"><div class="rv">'+ninosActivos().length+'</div><div class="rl">Estudiantes</div></div><div class="rb"><div class="rv">$'+totalMes+'</div><div class="rl">Ingreso mensual proyectado</div></div><div class="rb"><div class="rv">$'+totalCob+'</div><div class="rl">Total cobrado</div></div><div class="rb"><div class="rv">'+mats.filter(function(m){return Number(m.descuento)>0;}).length+'</div><div class="rl">Becas / descuentos</div></div></div>'+
    '<h2>Matrículas y mensualidades</h2><table><tr><th>N°</th><th>Estudiante</th><th>Sala</th><th>Servicio</th><th>Estado</th><th>Monto base</th><th>% Desc.</th><th>Paga/mes</th><th>Vence</th><th>Obs.</th></tr>'+matRows+'</table>'+
    '<h2>Historial de pagos — Total cobrado: $'+totalCob+'</h2><table><tr><th>Fecha</th><th>Estudiante</th><th>Concepto</th><th>Método</th><th>Monto</th><th>Obs.</th></tr>'+(pagRows||'<tr><td colspan="6">Sin pagos registrados</td></tr>')+'</table>'+
    '<div class="firmas"><div class="firma">'+nomDirectora()+'<br>Directora</div><div class="firma">Administración</div></div>'+
@@ -6595,7 +6610,7 @@ function genBalancePDF(mIdx,anioB){
   var MESES=['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
   var mesLabel=MESES[mIdx]+' '+anioB;
   var fecha=new Date().toLocaleDateString('es-EC',{day:'numeric',month:'long',year:'numeric'});
-  var pagsMes=(DB.historialPagos||[]).filter(function(h){try{var d=ymd(h.fecha);return d.getMonth()===mIdx&&d.getFullYear()===anioB;}catch(e){return false;}});
+  var pagsMes=(DB.historialPagos||[]).filter(function(h){try{var d=ymd(h.fecha);return d.getMonth()===mIdx&&d.getFullYear()===anioB&&pagoCuentaEnBalance(h);}catch(e){return false;}});
   var totalPagosB=pagsMes.reduce(function(s,h){return s+Number(h.monto||0);},0);
   var otrosMesB=(DB.otrosIngresos||[]).filter(function(o){return enMes(o,mesLabel,mIdx,anioB);});
   var totalOtrosB=otrosMesB.reduce(function(s,o){return s+Number(o.monto||0);},0);
