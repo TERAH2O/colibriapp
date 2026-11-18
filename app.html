@@ -2570,21 +2570,22 @@ function adminBalance(main){
 // ─── Filtro de estudiantes para las exportaciones (solo decide que sale en el archivo; no cambia ningun dato guardado) ───
 var EXP_FILTROS=[['activos_vigente','Activos del año vigente'],['activos_todos','Todos los activos'],['egresados','Egresados'],['retirados','Retirados'],['todos','Todos (activos, egresados y retirados)']];
 var EXP_FILTRO_KEY='colibriapp_expFiltro';
-function expFiltro(){ var f='activos_vigente'; try{ f=localStorage.getItem(EXP_FILTRO_KEY)||f; }catch(e){} return EXP_FILTROS.some(function(x){return x[0]===f;})?f:'activos_vigente'; }
+function expFiltro(){ var f='activos_todos'; try{ f=localStorage.getItem(EXP_FILTRO_KEY)||f; }catch(e){} return EXP_FILTROS.some(function(x){return x[0]===f;})?f:'activos_todos'; }
 function expFiltroLbl(){ var f=expFiltro(); return (EXP_FILTROS.find(function(x){return x[0]===f;})||EXP_FILTROS[0])[1]; }
-function ninoEnFiltro(n){
-  var e=estadoNino(n), f=expFiltro();
+function ninoEnFiltro(n,f){
+  var e=estadoNino(n); f=f||expFiltro();
   if(f==='activos_vigente') return e==='activo'&&(!n.anioLectivo||String(n.anioLectivo)===String(anioLectivoActual()));
   if(f==='activos_todos') return e==='activo';
   if(f==='egresados') return e==='egresado';
   if(f==='retirados') return e==='retirado';
   return true;
 }
-function ninosParaExportar(){ return (DB.ninos||[]).filter(ninoEnFiltro); }
+function ninosParaExportar(){ return (DB.ninos||[]).filter(function(n){ return ninoEnFiltro(n); }); }
 // Registros ligados a un estudiante (pagos, matriculas, accesos): solo los de los estudiantes incluidos; con "Todos" sale todo, incluso de estudiantes ya eliminados
 function okNidExport(){ var todos=expFiltro()==='todos', ids=new Set(ninosParaExportar().map(function(n){return n.id;})); return function(nid){ return todos||!nid||ids.has(nid); }; }
 function selectorFiltroExport(){
-  var sel=selEl(expFiltro(),EXP_FILTROS,function(v){ try{ localStorage.setItem(EXP_FILTRO_KEY,v); }catch(e){} showToast('Se exportará: '+expFiltroLbl(),'#7C3AED'); });
+  var opciones=EXP_FILTROS.map(function(x){ return [x[0],x[1]+' ('+(DB.ninos||[]).filter(function(n){ return ninoEnFiltro(n,x[0]); }).length+')']; });
+  var sel=selEl(expFiltro(),opciones,function(v){ try{ localStorage.setItem(EXP_FILTRO_KEY,v); }catch(e){} showToast('Se exportará: '+expFiltroLbl(),'#7C3AED'); });
   sel.style.maxWidth='290px'; sel.style.marginBottom='0';
   return div({display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'},p({margin:0,fontSize:'12px',fontWeight:800,color:'#5B21B6'},'Estudiantes a exportar:'),sel);
 }
@@ -3072,6 +3073,7 @@ function revisionDatos(){
     {id:'otromes',tit:'Cobrados en un mes pero que corresponden a otro',desc:'Es normal en pagos atrasados o adelantados. Son los pagos que mueven la diferencia en el Balance.',filas:H.filter(function(h){ return mesDesdeFecha(h.fecha)!==mesDelCobro(h); }).map(function(h){ return fila(h,'cobrado en '+mesDesdeFecha(h.fecha)); })},
     {id:'eliminados',tit:'Pagos de estudiantes eliminados',desc:'Se conservan en el historial y suman en el Balance, pero ya no aparecen en ninguna ficha.',filas:H.filter(function(h){ return !idsN[h.nid]; }).map(function(h){ return fila(h); })},
     {id:'matorfana',tit:'Matrículas sin estudiante',desc:'Registros de matrícula de estudiantes que ya no existen (Finanzas → 🧹 Depurar registros los quita sin tocar los pagos).',filas:(DB.matriculas||[]).filter(function(m){ return !idsN[m.nid]; }).map(function(m){ return {nom:'(estudiante eliminado)',concepto:'Matrícula '+(m.estado||''),mes:'',fecha:'',monto:redondear2(m.monto),metodo:'',extra:''}; })},
+    {id:'otroanio',tit:'Estudiantes activos con año lectivo distinto al vigente',desc:'Siguen contando como activos (con sus pagos y asistencia), pero su ficha dice otro año lectivo. Revisa si el año está mal puesto: el filtro "Activos del año vigente" de las exportaciones los deja fuera.',filas:N.filter(function(n){ return ninoActivo(n)&&n.anioLectivo&&String(n.anioLectivo)!==String(anioLectivoActual()); }).map(function(n){ return {nom:n.nom,concepto:'Año lectivo en la ficha: '+n.anioLectivo+' (vigente: '+anioLectivoActual()+')',mes:'',fecha:'',monto:'',metodo:'',extra:Object.keys(n.asis||{}).some(function(f){ return f>=fmt(new Date(Date.now()-30*86400000)); })?'con asistencia en los últimos 30 días':''}; })},
     {id:'sinanio',tit:'Estudiantes sin año lectivo',desc:'Fichas sin el campo año lectivo. No se tocan; solo se avisa.',filas:N.filter(function(n){ return !n.anioLectivo; }).map(function(n){ return {nom:n.nom,concepto:'Estado: '+estadoNino(n),mes:'',fecha:'',monto:'',metodo:'',extra:''}; })}
   ];
   return secs;
