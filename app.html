@@ -3083,12 +3083,29 @@ function csvRevisionDatos(secs){
   secs.forEach(function(sc){ sc.filas.forEach(function(f){ out+=[sc.tit,f.nom,f.concepto,f.mes,f.fecha,f.monto,f.metodo,f.extra].map(q).join(',')+'\n'; }); });
   return out;
 }
+// Corrige SOLO el campo "año lectivo" de los estudiantes activos cuya ficha dice otro año (no toca pagos, matrículas ni ningún otro dato).
+// Antes descarga un respaldo completo; si el respaldo falla, no cambia nada.
+function corregirAnioLectivoActivos(despues){
+  var vig=anioLectivoActual();
+  var lista=ninosActivos().filter(function(n){ return n.anioLectivo&&String(n.anioLectivo)!==String(vig); });
+  if(!lista.length){ showToast('No hay fichas por corregir','#10B981'); return; }
+  if(!confirm('Se cambiará el año lectivo a '+vig+' en la ficha de '+lista.length+' estudiantes activos.\n\nNo se toca ningún otro dato (pagos, matrículas, asistencia). Antes se descargará un respaldo completo.\n\n¿Continuar?')) return;
+  try{
+    var blob=new Blob([JSON.stringify({DB:DB,USERS:USERS,fecha:new Date().toISOString(),version:'1.0'},null,2)],{type:'application/json'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='colibri_respaldo_antes_de_corregir_anio_'+fmt(new Date())+'.json'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }catch(e){ showToast('No se pudo descargar el respaldo: no se cambió nada','#EF4444'); return; }
+  lista.forEach(function(n){ n.anioLectivo=vig; });
+  saveDB();
+  showToast('✅ Año lectivo corregido a '+vig+' en '+lista.length+' fichas','#10B981');
+  if(despues) despues();
+}
 function abrirRevisionDatos(){
   var secs=revisionDatos(), cont=div({maxHeight:'62vh',overflowY:'auto',paddingRight:'4px'});
-  cont.appendChild(p({margin:'0 0 12px',fontSize:'12px',color:'#6B7280'},'Esta lista es solo para revisar: no cambia ni borra ningún dato. Para corregir un pago, entra a Finanzas, busca al estudiante y usa ✏️ Editar.'));
+  cont.appendChild(p({margin:'0 0 12px',fontSize:'12px',color:'#6B7280'},'Esta lista es solo para revisar: no cambia ni borra ningún dato (el único botón de esta pantalla corrige el año lectivo de las fichas indicadas, con respaldo previo). Para corregir un pago, entra a Finanzas, busca al estudiante y usa ✏️ Editar.'));
   secs.forEach(function(sc){
     var h=div({display:'flex',gap:'8px',alignItems:'center',marginTop:'14px'},el('h4',{style:{margin:0,fontWeight:800,fontSize:'14px',flex:1}},sc.tit),el('span',{cls:'badge',style:{background:sc.filas.length?'#FEF3C7':'#D1FAE5',color:sc.filas.length?'#B45309':'#047857'}},sc.filas.length?String(sc.filas.length):'✅ 0'));
     cont.appendChild(h); cont.appendChild(p({margin:'2px 0 6px',fontSize:'11px',color:'#6B7280'},sc.desc));
+    if(sc.id==='otroanio'&&sc.filas.length) cont.appendChild(div({margin:'4px 0 8px'},btn('✏️ Corregir año lectivo a '+anioLectivoActual()+' ('+sc.filas.length+' fichas)','btn-pri',function(){ corregirAnioLectivoActivos(function(){ m.close(); abrirRevisionDatos(); }); })));
     sc.filas.slice(0,60).forEach(function(f){
       cont.appendChild(div({display:'flex',gap:'8px',alignItems:'center',padding:'5px 0',borderBottom:'1px solid #F3F4F6',flexWrap:'wrap'},
         div({flex:1,minWidth:'170px'},p({margin:0,fontWeight:700,fontSize:'12px'},f.nom),p({margin:0,fontSize:'11px',color:'#6B7280'},[f.concepto,f.mes&&('mes '+f.mes),f.fecha&&('cobrado '+f.fecha),f.extra].filter(Boolean).join(' · '))),
