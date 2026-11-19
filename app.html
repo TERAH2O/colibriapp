@@ -3073,7 +3073,7 @@ function revisionDatos(){
     {id:'otromes',tit:'Cobrados en un mes pero que corresponden a otro',desc:'Es normal en pagos atrasados o adelantados. Son los pagos que mueven la diferencia en el Balance.',filas:H.filter(function(h){ return mesDesdeFecha(h.fecha)!==mesDelCobro(h); }).map(function(h){ return fila(h,'cobrado en '+mesDesdeFecha(h.fecha)); })},
     {id:'eliminados',tit:'Pagos de estudiantes eliminados',desc:'Se conservan en el historial y suman en el Balance, pero ya no aparecen en ninguna ficha.',filas:H.filter(function(h){ return !idsN[h.nid]; }).map(function(h){ return fila(h); })},
     {id:'matorfana',tit:'Matrículas sin estudiante',desc:'Registros de matrícula de estudiantes que ya no existen (Finanzas → 🧹 Depurar registros los quita sin tocar los pagos).',filas:(DB.matriculas||[]).filter(function(m){ return !idsN[m.nid]; }).map(function(m){ return {nom:'(estudiante eliminado)',concepto:'Matrícula '+(m.estado||''),mes:'',fecha:'',monto:redondear2(m.monto),metodo:'',extra:''}; })},
-    {id:'otroanio',tit:'Estudiantes activos con año lectivo distinto al vigente',desc:'Siguen contando como activos (con sus pagos y asistencia), pero su ficha dice otro año lectivo. Revisa si el año está mal puesto: el filtro "Activos del año vigente" de las exportaciones los deja fuera.',filas:N.filter(function(n){ return ninoActivo(n)&&n.anioLectivo&&String(n.anioLectivo)!==String(anioLectivoActual()); }).map(function(n){ return {nom:n.nom,concepto:'Año lectivo en la ficha: '+n.anioLectivo+' (vigente: '+anioLectivoActual()+')',mes:'',fecha:'',monto:'',metodo:'',extra:Object.keys(n.asis||{}).some(function(f){ return f>=fmt(new Date(Date.now()-30*86400000)); })?'con asistencia en los últimos 30 días':''}; })},
+    {id:'otroanio',tit:'Estudiantes activos con año lectivo distinto al vigente',desc:'Siguen contando como activos (con sus pagos y asistencia), pero su ficha dice otro año lectivo. Revisa si el año está mal puesto: el filtro "Activos del año vigente" de las exportaciones los deja fuera. Los de un año anterior son reinscripciones pendientes (Niños → Reinscribir).',filas:N.filter(function(n){ return ninoActivo(n)&&n.anioLectivo&&String(n.anioLectivo)!==String(anioLectivoActual()); }).map(function(n){ return {nom:n.nom,concepto:'Año lectivo en la ficha: '+n.anioLectivo+' (vigente: '+anioLectivoActual()+')',mes:'',fecha:'',monto:'',metodo:'',extra:Object.keys(n.asis||{}).some(function(f){ return f>=fmt(new Date(Date.now()-30*86400000)); })?'con asistencia en los últimos 30 días':''}; })},
     {id:'sinanio',tit:'Estudiantes sin año lectivo',desc:'Fichas sin el campo año lectivo. No se tocan; solo se avisa.',filas:N.filter(function(n){ return !n.anioLectivo; }).map(function(n){ return {nom:n.nom,concepto:'Estado: '+estadoNino(n),mes:'',fecha:'',monto:'',metodo:'',extra:''}; })}
   ];
   return secs;
@@ -3085,9 +3085,15 @@ function csvRevisionDatos(secs){
 }
 // Corrige SOLO el campo "año lectivo" de los estudiantes activos cuya ficha dice otro año (no toca pagos, matrículas ni ningún otro dato).
 // Antes descarga un respaldo completo; si el respaldo falla, no cambia nada.
+// Activos cuya ficha dice un año lectivo POSTERIOR al vigente (p. ej. 2027-2028 cuando el vigente es 2026-2027): se asume mal puesto.
+// Los de un año ANTERIOR no se tocan: son reinscripciones pendientes y se gestionan en Niños → Reinscribir.
+function activosConAnioAdelantado(){
+  var vig=parseInt(String(anioLectivoActual()).slice(0,4),10);
+  return ninosActivos().filter(function(n){ var a=parseInt(String(n.anioLectivo||'').slice(0,4),10); return n.anioLectivo&&a>vig; });
+}
 function corregirAnioLectivoActivos(despues){
   var vig=anioLectivoActual();
-  var lista=ninosActivos().filter(function(n){ return n.anioLectivo&&String(n.anioLectivo)!==String(vig); });
+  var lista=activosConAnioAdelantado();
   if(!lista.length){ showToast('No hay fichas por corregir','#10B981'); return; }
   if(!confirm('Se cambiará el año lectivo a '+vig+' en la ficha de '+lista.length+' estudiantes activos.\n\nNo se toca ningún otro dato (pagos, matrículas, asistencia). Antes se descargará un respaldo completo.\n\n¿Continuar?')) return;
   try{
@@ -3105,7 +3111,7 @@ function abrirRevisionDatos(){
   secs.forEach(function(sc){
     var h=div({display:'flex',gap:'8px',alignItems:'center',marginTop:'14px'},el('h4',{style:{margin:0,fontWeight:800,fontSize:'14px',flex:1}},sc.tit),el('span',{cls:'badge',style:{background:sc.filas.length?'#FEF3C7':'#D1FAE5',color:sc.filas.length?'#B45309':'#047857'}},sc.filas.length?String(sc.filas.length):'✅ 0'));
     cont.appendChild(h); cont.appendChild(p({margin:'2px 0 6px',fontSize:'11px',color:'#6B7280'},sc.desc));
-    if(sc.id==='otroanio'&&sc.filas.length) cont.appendChild(div({margin:'4px 0 8px'},btn('✏️ Corregir año lectivo a '+anioLectivoActual()+' ('+sc.filas.length+' fichas)','btn-pri',function(){ corregirAnioLectivoActivos(function(){ m.close(); abrirRevisionDatos(); }); })));
+    if(sc.id==='otroanio'&&activosConAnioAdelantado().length) cont.appendChild(div({margin:'4px 0 8px'},btn('✏️ Corregir año lectivo a '+anioLectivoActual()+' ('+activosConAnioAdelantado().length+' fichas con un año posterior)','btn-pri',function(){ corregirAnioLectivoActivos(function(){ m.close(); abrirRevisionDatos(); }); })));
     sc.filas.slice(0,60).forEach(function(f){
       cont.appendChild(div({display:'flex',gap:'8px',alignItems:'center',padding:'5px 0',borderBottom:'1px solid #F3F4F6',flexWrap:'wrap'},
         div({flex:1,minWidth:'170px'},p({margin:0,fontWeight:700,fontSize:'12px'},f.nom),p({margin:0,fontSize:'11px',color:'#6B7280'},[f.concepto,f.mes&&('mes '+f.mes),f.fecha&&('cobrado '+f.fecha),f.extra].filter(Boolean).join(' · '))),
