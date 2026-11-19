@@ -2599,13 +2599,13 @@ function exportHistorialExcel(){
     const mat=DB.matriculas?DB.matriculas.find(m=>m.nid===n.id):null;
     const sv=mat?getSvcInfo(mat.servicio):{label:'—'};
     const estMap={vigente:'✅ Vigente',por_vencer:'⏰ Por vencer',vencido:'🔴 Vencido',beca:'🎓 Beca'};
-    matRows+='<tr><td>'+(i+1)+'</td><td>'+n.nom+'</td><td>'+(sala?sala.nom:'—')+'</td><td>'+sv.label+'</td><td>'+(mat?estMap[mat.estado]||mat.estado:'—')+'</td><td>$'+(mat?mat.monto||0:0)+'</td><td>'+(mat&&mat.vence?mat.vence:'—')+'</td><td>'+n.tutor+'</td><td>'+n.tel+'</td><td>'+(mat&&mat.obs?mat.obs:'—')+'</td></tr>';
+    matRows+='<tr><td>'+(i+1)+'</td><td>'+n.nom+'</td><td>'+(sala?sala.nom:'—')+'</td><td>'+sv.label+'</td><td>'+(mat?estMap[mat.estado]||mat.estado:'—')+'</td><td>$'+(mat?mat.monto||0:0)+'</td><td>'+(mat&&mat.vence?mat.vence:'—')+'</td><td>'+n.tutor+'</td><td>'+n.tel+'</td><td>'+(mat&&mat.obs?mat.obs:'—')+'</td><td>'+situacionNino(n).lbl+'</td><td>'+(situacionNino(n).baja||'—')+'</td></tr>';
   });
   // Sheet 2: Pagos
   let pagRows='';
   pagosX.slice().reverse().forEach(h=>{
     const nino=DB.ninos.find(n=>n.id===h.nid);
-    pagRows+='<tr><td>'+h.fecha+'</td><td>'+(nino?nino.nom:'—')+'</td><td>'+h.concepto+'</td><td>'+h.metodo+'</td><td>$'+h.monto+'</td><td>'+(h.obs||'—')+'</td></tr>';
+    pagRows+='<tr><td>'+h.fecha+'</td><td>'+(nino?nino.nom:'—')+'</td><td>'+h.concepto+'</td><td>'+h.metodo+'</td><td>$'+h.monto+'</td><td>'+(h.obs||'—')+'</td><td>'+situacionNino(nino).lbl+'</td></tr>';
   });
   const totalCob=pagosX.reduce((s,h)=>s+Number(h.monto||0),0);
   const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
@@ -2621,13 +2621,13 @@ function exportHistorialExcel(){
 <tr><td colspan="10" class="sh">Historial General · Emitido: ${fecha}</td></tr>
 <tr><td colspan="10" style="padding:6px 10px;font-size:10pt"><strong>Estudiantes incluidos:</strong> ${expFiltroLbl()} (${ninosX.length}) &nbsp;|&nbsp; <strong>Total cobrado:</strong> $${totalCob}</td></tr>
 <tr><td colspan="10" class="sh" style="background:#7C3AED;color:#fff">📋 MATRÍCULAS</td></tr>
-<tr><th class="thcol">N°</th><th class="thcol">Estudiante</th><th class="thcol">Sala</th><th class="thcol">Servicio</th><th class="thcol">Estado</th><th class="thcol">Monto</th><th class="thcol">Vence</th><th class="thcol">Tutor</th><th class="thcol">Teléfono</th><th class="thcol">Obs.</th></tr>
+<tr><th class="thcol">N°</th><th class="thcol">Estudiante</th><th class="thcol">Sala</th><th class="thcol">Servicio</th><th class="thcol">Estado matrícula</th><th class="thcol">Monto</th><th class="thcol">Vence</th><th class="thcol">Tutor</th><th class="thcol">Teléfono</th><th class="thcol">Obs.</th><th class="thcol">Situación</th><th class="thcol">Fecha de baja</th></tr>
 ${matRows}
 <tr><td colspan="10" style="height:20px"></td></tr>
 <tr><td colspan="6" class="sh" style="background:#10B981;color:#fff">💳 HISTORIAL DE PAGOS — Total cobrado: $${totalCob}</td></tr>
-<tr><th class="thcol">Fecha</th><th class="thcol">Estudiante</th><th class="thcol">Concepto</th><th class="thcol">Método</th><th class="thcol">Monto</th><th class="thcol">Obs.</th></tr>
+<tr><th class="thcol">Fecha</th><th class="thcol">Estudiante</th><th class="thcol">Concepto</th><th class="thcol">Método</th><th class="thcol">Monto</th><th class="thcol">Obs.</th><th class="thcol">Situación del estudiante</th></tr>
 ${pagRows}
-<tr><td colspan="4" class="ev">TOTAL COBRADO</td><td class="ev">$${totalCob}</td><td></td></tr>
+<tr><td colspan="4" class="ev">TOTAL COBRADO</td><td class="ev">$${totalCob}</td><td></td><td></td></tr>
 </table></body></html>`;
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([html],{type:'application/vnd.ms-excel;charset=utf-8'}));
@@ -2639,18 +2639,18 @@ ${pagRows}
 function exportHistorialCSV(){
   const ninosX=ninosParaExportar(), okX=okNidExport(), pagosX=(DB.historialPagos||[]).filter(h=>okX(h.nid));
   let csv='Estudiantes incluidos: '+expFiltroLbl()+' ('+ninosX.length+')\n\nMATRÍCULAS\n';
-  csv+='Estudiante,Sala,Servicio,Estado,Monto,Vence,Tutor,Teléfono\n';
+  csv+='Estudiante,Sala,Servicio,Estado matrícula,Monto,Vence,Tutor,Teléfono,Situación,Fecha de baja\n';
   ninosX.forEach(n=>{
     const sala=DB.salas.find(s=>s.id===n.sid);
     const mat=DB.matriculas?DB.matriculas.find(m=>m.nid===n.id):null;
     const sv=mat?getSvcInfo(mat.servicio):{label:'—'};
-    csv+='"'+n.nom+'","'+(sala?sala.nom:'—')+'","'+sv.label+'","'+(mat?mat.estado:'—')+'","$'+(mat?mat.monto||0:0)+'","'+(mat&&mat.vence?mat.vence:'—')+'","'+n.tutor+'","'+n.tel+'"\n';
+    csv+='"'+n.nom+'","'+(sala?sala.nom:'—')+'","'+sv.label+'","'+(mat?mat.estado:'—')+'","$'+(mat?mat.monto||0:0)+'","'+(mat&&mat.vence?mat.vence:'—')+'","'+n.tutor+'","'+n.tel+'","'+situacionNino(n).lbl+'","'+(situacionNino(n).baja||'')+'"\n';
   });
   csv+='\nHISTORIAL DE PAGOS\n';
-  csv+='Fecha,Estudiante,Concepto,Método,Monto\n';
+  csv+='Fecha,Estudiante,Concepto,Método,Monto,Situación del estudiante\n';
   pagosX.slice().reverse().forEach(h=>{
     const nino=DB.ninos.find(n=>n.id===h.nid);
-    csv+=h.fecha+',"'+(nino?nino.nom:'—')+'","'+h.concepto+'",'+h.metodo+',$'+h.monto+'\n';
+    csv+=h.fecha+',"'+(nino?nino.nom:'—')+'","'+h.concepto+'",'+h.metodo+',$'+h.monto+',"'+situacionNino(nino).lbl+'"\n';
   });
   const a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'}));
@@ -2660,18 +2660,30 @@ function exportHistorialCSV(){
 }
 
 function adminHistorial(main){
-  let filtroNino='todos', filtroMes='todos';
+  let filtroNino='todos', filtroMes='todos', filtroEst='todos';
   function draw(){
     main.innerHTML='';
+    const enGrupo=n=>filtroEst==='todos'||situacionNino(n).id===filtroEst;
     const expBtn=div({display:'flex',gap:'8px',alignItems:'center',flexWrap:'wrap'});
     expBtn.appendChild(selectorFiltroExport());
     expBtn.appendChild(btn('📊 Exportar Excel','btn-sm btn-grn',()=>exportHistorialExcel()));
     expBtn.appendChild(btn('📄 Exportar CSV','btn-sm',()=>exportHistorialCSV(),{background:'#E5E7EB',color:'#1E1B4B',border:'none',borderRadius:'10px'}));
     main.appendChild(shdr('Historial General de Matrículas y Pagos','Todos los registros del sistema',expBtn));
 
+    // Situación de los estudiantes: los mismos totales que las pestañas de la pantalla Niños
+    const cntSit=k=>DB.ninos.filter(n=>situacionNino(n).id===k).length;
+    const sitRow=div({display:'flex',gap:'8px',flexWrap:'wrap',marginBottom:'14px',alignItems:'center'});
+    sitRow.appendChild(p({margin:0,fontSize:'12px',fontWeight:700,color:'#6B7280'},'Estudiantes:'));
+    [['todos','📋 Todos',DB.ninos.length,'#1E1B4B','#E5E7EB'],['vigente','✅ Vigentes',cntSit('vigente'),'#10B981','#D1FAE5'],['egresado','🎓 Egresados',cntSit('egresado'),'#7C3AED','#EDE9FE'],['retirado','🚪 Retirados',cntSit('retirado'),'#EF4444','#FEE2E2']].forEach(([id,l,c,col,bg])=>{
+      const act=filtroEst===id;
+      const b=el('button',{style:{padding:'7px 14px',borderRadius:'99px',border:'2px solid '+(act?col:'#E5E7EB'),background:act?bg:'#fff',color:act?col:'#6B7280',fontWeight:700,fontSize:'12px',cursor:'pointer'}},l+' ('+c+')');
+      b.addEventListener('click',()=>{ filtroEst=id; const nn=DB.ninos.find(x=>x.id===filtroNino); if(filtroNino!=='todos'&&nn&&!enGrupo(nn)) filtroNino='todos'; draw(); });
+      sitRow.appendChild(b);
+    });
+    main.appendChild(sitRow);
     // Filters
     const fRow=div({display:'flex',gap:'12px',marginBottom:'20px',flexWrap:'wrap',alignItems:'flex-end'});
-    const ninoOpts=[['todos','Todos los estudiantes'],...DB.ninos.map(n=>[n.id,n.nom])];
+    const ninoOpts=[['todos','Todos los estudiantes'],...DB.ninos.filter(enGrupo).map(n=>{ const st=situacionNino(n); return [n.id,n.nom+(st.id==='vigente'?'':' ('+st.lbl+')')]; })];
     const mesesUsados=[...new Set((DB.historialPagos||[]).map(h=>{try{const d=ymd(h.fecha);return d.toLocaleString('es-EC',{month:'long',year:'numeric'});}catch{return '';}}).filter(Boolean))];
     const mesOpts=[['todos','Todos los meses'],...mesesUsados.map(m=>[m,m])];
     fRow.appendChild(div({minWidth:'220px'},el('label',{cls:'lbl'},'Filtrar por estudiante'),selEl(filtroNino,ninoOpts,v=>{filtroNino=v;draw();})));
@@ -2682,30 +2694,33 @@ function adminHistorial(main){
     const mCard=el('div',{cls:'card'});
     mCard.appendChild(el('h3',{style:{margin:'0 0 14px',fontWeight:800}},'📋 Estado de matrículas'));
     const thead=div({display:'grid',gridTemplateColumns:'2fr 1.2fr 1fr 0.8fr 1.2fr 1.5fr',background:'#1E1B4B',padding:'10px 16px',borderRadius:'10px 10px 0 0'});
-    ['Estudiante','Servicio','Estado','Monto','Vence','Observación'].forEach(h=>thead.appendChild(p({margin:0,fontSize:'11px',fontWeight:700,color:'rgba(255,255,255,.7)',textTransform:'uppercase'},h)));
+    ['Estudiante','Servicio','Situación','Monto','Vence','Observación'].forEach(h=>thead.appendChild(p({margin:0,fontSize:'11px',fontWeight:700,color:'rgba(255,255,255,.7)',textTransform:'uppercase'},h)));
     mCard.appendChild(thead);
     const SVCS=getSvcs();
     const ESTS=[{id:'vigente',label:'✅ Vigente',c:'#10B981',bg:'#D1FAE5'},{id:'por_vencer',label:'⏰ Por vencer',c:'#F59E0B',bg:'#FEF3C7'},{id:'vencido',label:'🔴 Vencido',c:'#EF4444',bg:'#FEE2E2'},{id:'beca',label:'🎓 Beca',c:'#8B5CF6',bg:'#EDE9FE'}];
-    const mats=(DB.matriculas||[]).filter(m=>(filtroNino==='todos'||m.nid===filtroNino)&&DB.ninos.some(n=>n.id===m.nid));
+    const mats=(DB.matriculas||[]).filter(m=>(filtroNino==='todos'||m.nid===filtroNino)&&DB.ninos.some(n=>n.id===m.nid&&enGrupo(n)));
     if(!mats.length) mCard.appendChild(p({padding:'20px',textAlign:'center',color:'#6B7280',fontSize:'13px'},'Sin matrículas.'));
     mats.forEach((m,i)=>{
       const nino=DB.ninos.find(n=>n.id===m.nid); if(!nino)return;
       const sala=DB.salas.find(s=>s.id===nino.sid);
       const sv=getSvcInfo(m.servicio);
       const es=ESTS.find(s=>s.id===m.estado)||ESTS[0];
+      const st=situacionNino(nino);
       const row=div({display:'grid',gridTemplateColumns:'2fr 1.2fr 1fr 0.8fr 1.2fr 1.5fr',padding:'10px 16px',alignItems:'center',background:i%2===0?'#fff':'#FAFAFA',borderBottom:'1px solid #E5E7EB'});
       row.appendChild(div({display:'flex',gap:'8px',alignItems:'center'},div({fontSize:'18px'},nino.ava),div(null,p({margin:0,fontWeight:700,fontSize:'13px'},nino.nom),p({margin:0,fontSize:'11px',color:'#6B7280'},sala?sala.nom:'—'))));
       row.appendChild(el('span',{style:{background:sv.bg,color:sv.c,borderRadius:'8px',padding:'3px 9px',fontSize:'11px',fontWeight:700}},sv.label));
-      row.appendChild(el('span',{style:{background:es.bg,color:es.c,borderRadius:'8px',padding:'3px 9px',fontSize:'11px',fontWeight:700}},es.label));
+      if(st.id==='vigente') row.appendChild(el('span',{style:{background:es.bg,color:es.c,borderRadius:'8px',padding:'3px 9px',fontSize:'11px',fontWeight:700}},es.label));
+      else { row.style.opacity='.85'; row.appendChild(div(null,el('span',{style:{background:st.bg,color:st.c,borderRadius:'8px',padding:'3px 9px',fontSize:'11px',fontWeight:700}},st.ico+' '+st.lbl),p({margin:'3px 0 0',fontSize:'10px',color:'#6B7280'},st.baja?('desde '+st.baja):'sin fecha de baja'))); }
       row.appendChild(p({margin:0,fontWeight:800,fontSize:'14px',color:'#1E1B4B'},'$'+(m.monto||0)));
       row.appendChild(p({margin:0,fontSize:'12px',color:'#6B7280'},m.vence||'—'));
       row.appendChild(p({margin:0,fontSize:'12px',color:'#6B7280'},m.obs||'—'));
       mCard.appendChild(row);
     });
-    const matTotal=mats.reduce((s,m)=>s+Number(m.monto||0),0);
+    // Proyectado: solo estudiantes vigentes (mismo criterio y mismo monto con descuento que Finanzas)
+    const matTotal=redondear2(mats.filter(m=>{ const n=DB.ninos.find(x=>x.id===m.nid); return n&&ninoActivo(n)&&m.estado!=='vencido'; }).reduce((s,m)=>s+matMonto(m),0));
     mCard.appendChild(div({background:'#1E1B4B',padding:'10px 16px',borderRadius:'0 0 10px 10px',display:'flex',justifyContent:'space-between'},
       p({margin:0,color:'rgba(255,255,255,.7)',fontSize:'13px',fontWeight:700},mats.length+' matrículas'),
-      p({margin:0,color:'#F59E0B',fontSize:'16px',fontWeight:900},'$'+matTotal+'/mes proyectado')
+      p({margin:0,color:'#F59E0B',fontSize:'16px',fontWeight:900},'$'+matTotal+'/mes proyectado (solo vigentes)')
     ));
     main.appendChild(mCard);
 
@@ -2713,7 +2728,7 @@ function adminHistorial(main){
     const pCard=el('div',{cls:'card'});
     pCard.appendChild(el('h3',{style:{margin:'0 0 14px',fontWeight:800}},'💳 Historial de pagos'));
     const hpags=(DB.historialPagos||[]).filter(h=>{
-      const ninoOk=filtroNino==='todos'||h.nid===filtroNino;
+      const ninoOk=(filtroNino==='todos'||h.nid===filtroNino)&&(filtroEst==='todos'||(()=>{ const nn=DB.ninos.find(x=>x.id===h.nid); return !!nn&&enGrupo(nn); })());
       const mesOk=filtroMes==='todos'||(()=>{try{const d=ymd(h.fecha);return d.toLocaleString('es-EC',{month:'long',year:'numeric'})===filtroMes;}catch{return false;}})();
       return ninoOk&&mesOk;
     }).slice().reverse();
@@ -2727,7 +2742,7 @@ function adminHistorial(main){
         const nino=DB.ninos.find(n=>n.id===h.nid);
         const row=div({display:'grid',gridTemplateColumns:'0.8fr 2fr 1fr 0.8fr 1fr',padding:'9px 16px',alignItems:'center',background:i%2===0?'#fff':'#FAFAFA',borderBottom:'1px solid #E5E7EB'});
         row.appendChild(p({margin:0,fontSize:'12px',color:'#6B7280'},h.fecha));
-        row.appendChild(div({display:'flex',gap:'8px',alignItems:'center'},div({fontSize:'16px'},nino?nino.ava:'👶'),p({margin:0,fontWeight:700,fontSize:'13px'},nino?nino.nom:'—')));
+        row.appendChild(div({display:'flex',gap:'8px',alignItems:'center'},div({fontSize:'16px'},nino?nino.ava:'👶'),div(null,p({margin:0,fontWeight:700,fontSize:'13px'},nino?nino.nom:'(estudiante eliminado)'),(()=>{ const st=situacionNino(nino); return st.id==='vigente'?null:p({margin:0,fontSize:'10px',fontWeight:700,color:st.c},st.ico+' '+st.lbl+(st.baja?' · desde '+st.baja:'')); })())));
         row.appendChild(p({margin:0,fontSize:'12px'},h.concepto));
         row.appendChild(el('span',{style:{background:h.metodo==='beca'?'#EDE9FE':h.metodo==='transferencia'?'#CFFAFE':'#D1FAE5',color:h.metodo==='beca'?'#8B5CF6':h.metodo==='transferencia'?'#06B6D4':'#059669',borderRadius:'8px',padding:'3px 8px',fontSize:'11px',fontWeight:700}},h.metodo));
         row.appendChild(p({margin:0,fontWeight:900,fontSize:'14px',color:h.monto>0?'#10B981':'#8B5CF6'},'$'+h.monto));
@@ -3353,6 +3368,14 @@ function mesBajaNino(n){ if(!n||ninoActivo(n)) return ''; return String(n.egreso
 // Un cobro cuenta en el Balance mientras el niño estuvo activo: hasta el mes de su baja. Los de niños eliminados o sin fecha de baja se conservan.
 function pagoCuentaEnBalance(h){ var n=(DB.ninos||[]).find(function(x){ return x.id===h.nid; }); var b=mesBajaNino(n); if(!b) return true; return String(h.fecha||'').slice(0,7)<=b; }
 function matriculasActivas(){ var ids={}; ninosActivos().forEach(function(n){ ids[n.id]=1; }); return (DB.matriculas||[]).filter(function(m){ return ids[m.nid]; }); }
+// Situacion de un estudiante para el Historial: vigente / egresado / retirado (con su fecha de baja) / eliminado
+function situacionNino(n){
+  if(!n) return {id:'eliminado',lbl:'Eliminado',ico:'🗑️',c:'#6B7280',bg:'#F3F4F6',baja:''};
+  var e=estadoNino(n);
+  if(e==='egresado') return {id:'egresado',lbl:'Egresado',ico:'🎓',c:'#7C3AED',bg:'#EDE9FE',baja:n.egresoFecha||''};
+  if(e==='retirado') return {id:'retirado',lbl:'Retirado',ico:'🚪',c:'#EF4444',bg:'#FEE2E2',baja:n.retiroFecha||''};
+  return {id:'vigente',lbl:'Vigente',ico:'✅',c:'#10B981',bg:'#D1FAE5',baja:''};
+}
 // Papa de un niño egresado/retirado: ya no tiene acceso mientras el niño no este activo
 function papaSinAcceso(u){ if(!u||u.rol!=='papa') return false; var n=(DB.ninos||[]).find(function(x){ return x.id===u.nid; }); return !!n&&!ninoActivo(n); }
 function ninoVacas(n,mes){ return ((n&&n.vacas)||[]).indexOf(mes)>=0; }
